@@ -1,0 +1,171 @@
+#!/bin/bash
+
+[ -t 0 ] || exec >> $0.log 2>&1
+
+WAIT_TO_SEND=5
+(flock -n 9 && { sleep $WAIT_TO_SEND; $0 FLUSH; }) 9> $0.lck&
+
+# LOGBUFF is shared/appended by every invocation and drained by FLUSH;
+# LOGLOCK guards that access so a flush can never race an append (see below).
+LOGBUFF="/tmp/mylogwatch"
+LOGLOCK="$LOGBUFF.lock"
+
+# Site-local settings (ignore/replace rules, EMAIL_DOMAIN override, PRIV_CMD)
+# live in $0.cfg, which is deliberately not part of this repo -- copy
+# mylogwatch.cfg.example next to this script and adjust it per host.
+IGNORES="^$"            # ignores empty lines per default
+PRIV_CMD=""             # e.g. "sudo" or a custom wrapper, only used when not root
+. $0.cfg 2> /dev/null   # optionally cfg ignores (no error if missing)
+
+if ! [[ "$@" =~ ^FLUSH$ ]]; then
+
+# any match leads to an ignore
+if [[ "$@" =~ ${IGNORES}${AP_ETHERS} ]]; then
+    printf "ignored\n"
+else
+    (
+        exec 200> "$LOGLOCK"
+        flock -x 200
+        printf "$@\n" >> "$LOGBUFF"
+    )
+fi
+
+else
+
+# Hand the buffer off to a private, uniquely-named file under the same
+# lock used for appends. This only needs to exclude appends for the
+# instant the mv takes -- writers resume immediately into a fresh
+# LOGBUFF while we take our time reading/mailing this batch below, so a
+# slow sendmail can never stall log writers.
+LOGBATCH="$LOGBUFF.$$"
+
+cat > $0_$$.awk << !
+
+func ex(CMD, \
+    line)
+{
+    CMD = CMD " 2>&1"
+    while (CMD | getline line > 0); close(CMD); return line
+}
+
+#
+# ATTENTION:
+# rev_resolution only called after SM_NAME is initialized to setup MYHOST correctly
+#
+func rev_resolution(tocheck, \
+    CNT, CMD, line, a, b)
+{
+    while (match(tocheck, "^(|.*[^0-9#])([0-9]+\\\.[0-9]+\\\.[0-9]+\\\.[0-9]+)(|[^0-9].*)$", a)) {
+        CMD = MYHOST " " a[2]; CMD | getline line; close(CMD)
+        split(line, b)
+        line = b[2]
+        if (!line || match(line, "NXDOMAIN")) {
+            line = a[2]
+        }
+        tocheck = a[1] "#" line a[3]
+
+        #
+        # delimit maximum loop cnt for your safety
+        #
+        if (CNT++ > 10) {
+            print "mylogwatch: EMERGENCY BREAK IN LOOP"
+            break
+        }
+    }
+    return tocheck
+}
+
+func replace_known_AP(line, \
+    i, a)
+{
+    for (i = 2; ETHERS[i]; i += 2) {
+        if (match(line, "^(.*)" ETHERS[i] "(.*)$", a)) {
+            return a[1] "[ " ETHERS[i - 1] " ]" a[2]
+        }
+    }
+    return line
+}
+
+BEGIN {
+    system("rm $0_$$.awk")
+    PRGBNAME = "${0##*/}"
+
+    # LOGBATCH is provided by the calling script through shell interpolation
+    # (it hands us a private, already rotated-off copy of the shared buffer
+    # -- see the mv below).
+    LOGBATCH="$LOGBATCH"
+
+    # dont use 'cat /etc/hostname' here because of race wit rsync from roja copy!!!!
+    HOSTNAME = "$(hostname -s)"
+    MYHOST = "/usr/bin/getent hosts"
+
+    # fiddle EMAIL DOMAIN
+    # first set a reasonable default
+    EMAIL_DOMAIN = "example.com"
+
+    # then try to retrieve from nullmailer cfg (if any)
+    getline EMAIL_DOMAIN_NM < "/etc/nullmailer/remotes"; close("/etc/nullmailer/remotes")
+
+    # if there is a simple smart host (without pass) use that
+    # AKA dont allow the default smtp --start...
+    if (match(EMAIL_DOMAIN_NM, "^[^ ]+$")) {
+        EMAIL_DOMAIN = EMAIL_DOMAIN_NM
+    }
+
+    # highest priority: an explicit per-host override from mylogwatch.cfg
+    EMAIL_DOMAIN_OVERRIDE = "$EMAIL_DOMAIN"
+    if (EMAIL_DOMAIN_OVERRIDE) {
+        EMAIL_DOMAIN = EMAIL_DOMAIN_OVERRIDE
+    }
+
+    ADDR_FROM = HOSTNAME " <" PRGBNAME "." HOSTNAME "@" EMAIL_DOMAIN ">"
+    ADDR_TO =   ADDR_FROM
+    SMTP_FROM = ADDR_FROM
+    if (match(SMTP_FROM, "([< ]|^)([^< ]+@[^> ]+)([> ]|$)", a)) {
+        SMTP_FROM = a[2]
+    }
+    SENDMAIL = "/usr/sbin/sendmail -t -f " SMTP_FROM
+    getline line < LOGBATCH
+    if (line) {
+        print "From: " ADDR_FROM                    | SENDMAIL
+        print "To: " ADDR_TO                        | SENDMAIL
+        line = rev_resolution(gensub("^( *|<[^>]*>)", "", "g", line))
+        line = replace_known_AP(line)
+
+        #
+        #avoid uncomplete time stamps in subject line like this
+        #[    0.001491] Calibrati...
+        #and print BogoMIPS alone...
+        #
+        sline = gensub("^\\\[[0-9 .]+\\\] ", "", "g", line)
+        sline = gensub("^.*[^0-9.]([0-9.]+ BogoMIPS).*$", "\\\1", "g", sline)
+
+        print "Subject: " (sline ? sline : "empty") | SENDMAIL
+        print ""                                    | SENDMAIL
+        print line                                  | SENDMAIL
+        while (getline line < LOGBATCH > 0) {
+            line = rev_resolution(gensub("^( *|<[^>]*>)", "", "g", line))
+            line = replace_known_AP(line)
+            print line                              | SENDMAIL
+        }
+        close(SENDMAIL)
+    } else {
+        print "EMPTY"
+    }
+    close(LOGBATCH)
+    ex("rm -f " LOGBATCH)
+}
+!
+
+# must exec as root to open /etc/nullmailer/...
+[ $(id -u) -eq 0 ] || PP="$PRIV_CMD"
+
+(
+    exec 200> "$LOGLOCK"
+    flock -x 200
+    [ -f "$LOGBUFF" ] && mv "$LOGBUFF" "$LOGBATCH"
+)
+
+exec $PP awk -f $0_$$.awk
+
+fi

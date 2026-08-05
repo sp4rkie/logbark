@@ -1,0 +1,29 @@
+# Site-local settings for mylogwatch, sourced via ". $0.cfg" on every run.
+# Copy this file to "mylogwatch.cfg" next to the script and adjust it --
+# mylogwatch.cfg itself is gitignored since it typically ends up holding
+# device identifiers (MAC/IMSI/IMEI) you don't want in version control.
+
+# IGNORES: "|"-joined regex alternatives; any argument matching one of
+# these is dropped instead of buffered. Must end with "__END__|" so the
+# trailing "|" before AP_ETHERS is harmless.
+    IGNORES=\
+"some-chatty-daemon|"\
+\
+"__END__|"
+
+# AP_ETHERS: "Label|Identifier|" pairs (label padded for alignment is
+# only cosmetic) of known devices whose raw identifier should be
+# swapped for a friendly label wherever it shows up in a log line.
+# Must end with "^$|__END__" as a terminator.
+    AP_ETHERS=\
+"my-router      |AA:BB:CC:DD:EE:FF|"\
+\
+"^$|__END__"
+
+# Optional: override the outgoing mail domain (default is "example.com",
+# or whatever /etc/nullmailer/remotes resolves to if present).
+#EMAIL_DOMAIN="example.com"
+
+# Optional: command prefix used to run awk when not root (needed to
+# read /etc/nullmailer/remotes). Leave unset to run unprivileged.
+#PRIV_CMD="sudo"
