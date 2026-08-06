@@ -1,25 +1,40 @@
 #!/bin/bash
 
-[ -t 0 ] || exec >> $0.log 2>&1
-
 # Site-local settings (ignore/replace rules, EMAIL_DOMAIN override, PRIV_CMD)
 # live in $0.cfg, which is deliberately not part of this repo -- copy
 # mylogwatch.cfg.example next to this script and adjust it per host.
+PRGBNAME="${0##*/}"
 WAIT_TO_SEND=5              # time span collecting messages until flush
-LOGBUFF="/tmp/mylogwatch"   # LOGBUFF is shared/appended by every invocation and drained by FLUSH;
-LOGLOCK="$LOGBUFF.lock"     # LOGLOCK guards that access so a flush can never race an append (see below).
+RUNDIR="${TMPDIR:-/tmp}"    # all runtime state lives here; nothing is ever
+                            # written next to the script, so it can be
+                            # installed read-only (e.g. /usr/local/sbin)
 IGNORES="^$"                # ignores empty lines per default
 PRIV_CMD=""                 # e.g. "sudo" or a custom wrapper, only used when not root
 . $0.cfg 2> /dev/null       # optionally cfg ignores (no error if missing)
+
+LOGBUFF="$RUNDIR/$PRGBNAME" # LOGBUFF is shared/appended by every invocation and drained by FLUSH;
+LOGLOCK="$LOGBUFF.lock"     # LOGLOCK guards that access so a flush can never race an append (see below).
+SCHEDLOCK="$LOGBUFF.lck"    # SCHEDLOCK debounces the flush, so a burst yields one mail
+
+# redirected only after the cfg is read, so RUNDIR can steer it too
+[ -t 0 ] || exec >> "$LOGBUFF.log" 2>&1
 
 # join all args into the one line we test and buffer, so a caller that
 # forgets to quote cannot silently lose everything after the first word
 MSG="$*"
 
+# An empty alternative matches every line, so a cfg that sets IGNORES with
+# the conventional trailing '|' but leaves AP_ETHERS unset would silently
+# discard the whole log. Drop empty alternatives before using the pattern.
+IGNORE_RE="${IGNORES}${AP_ETHERS}"
+while [[ "$IGNORE_RE" == *'||'* ]]; do IGNORE_RE="${IGNORE_RE//||/|}"; done
+IGNORE_RE="${IGNORE_RE#|}"
+IGNORE_RE="${IGNORE_RE%|}"
+
 if ! [[ "$MSG" =~ ^FLUSH$ ]]; then
 
     # any match leads to an ignore
-    if [[ "$MSG" =~ ${IGNORES}${AP_ETHERS} ]]; then
+    if [[ -n "$IGNORE_RE" && "$MSG" =~ $IGNORE_RE ]]; then
         printf "ignored\n"
     else
         (
@@ -32,7 +47,7 @@ if ! [[ "$MSG" =~ ^FLUSH$ ]]; then
         # flushing: a line arriving while sendmail is still running must be
         # able to schedule the next flush, or it sits in LOGBUFF unsent
         # until some unrelated later line happens to trigger one.
-        (flock -n 9 || exit; sleep $WAIT_TO_SEND) 9> $0.lck && $0 FLUSH &
+        (flock -n 9 || exit; sleep $WAIT_TO_SEND) 9> "$SCHEDLOCK" && $0 FLUSH &
     fi
 
 else
@@ -44,7 +59,12 @@ else
 # slow sendmail can never stall log writers.
 LOGBATCH="$LOGBUFF.$$"
 
-cat > $0_$$.awk << !
+# mktemp (0600, O_EXCL) rather than a predictable name next to the script:
+# the script's directory is typically not writable by the invoking user, and
+# a guessable path in a shared RUNDIR would be a symlink target
+AWKPROG=$(mktemp "$RUNDIR/$PRGBNAME.XXXXXX.awk") || exit 1
+
+cat > "$AWKPROG" << !
 
 func ex(CMD, \
     line)
@@ -99,8 +119,8 @@ func replace_known_AP(line, \
 }
 
 BEGIN {
-    system("rm $0_$$.awk")
-    PRGBNAME = "${0##*/}"
+    system("rm -f \"$AWKPROG\"")
+    PRGBNAME = "$PRGBNAME"
 
     # AP_ETHERS comes in via -v (not interpolated into this script) so that
     # quotes or backslashes in a cfg label cannot break the generated awk
@@ -181,6 +201,6 @@ BEGIN {
     [ -f "$LOGBUFF" ] && mv "$LOGBUFF" "$LOGBATCH"
 )
 
-exec $PP awk -v AP_ETHERS="$AP_ETHERS" -f $0_$$.awk
+exec $PP awk -v AP_ETHERS="$AP_ETHERS" -f "$AWKPROG"
 
 fi
