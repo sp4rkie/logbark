@@ -106,10 +106,9 @@ BEGIN {
     # then try to retrieve from nullmailer cfg (if any)
     getline EMAIL_DOMAIN_NM < "/etc/nullmailer/remotes"; close("/etc/nullmailer/remotes")
 
-    # if there is a simple smart host (without pass) use that
-    # AKA dont allow the default smtp --start...
-    if (match(EMAIL_DOMAIN_NM, "^[^ ]+$")) {
-        EMAIL_DOMAIN = EMAIL_DOMAIN_NM
+    # if there is a simple smart host use that
+    if (match(EMAIL_DOMAIN_NM, "^([^ ]+)", a)) {
+        EMAIL_DOMAIN = a[1]
     }
 
     # highest priority: an explicit per-host override from mylogwatch.cfg
