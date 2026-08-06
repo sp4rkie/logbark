@@ -12,18 +12,27 @@ IGNORES="^$"                # ignores empty lines per default
 PRIV_CMD=""                 # e.g. "sudo" or a custom wrapper, only used when not root
 . $0.cfg 2> /dev/null       # optionally cfg ignores (no error if missing)
 
-if ! [[ "$@" =~ ^FLUSH$ ]]; then
+# join all args into the one line we test and buffer, so a caller that
+# forgets to quote cannot silently lose everything after the first word
+MSG="$*"
+
+if ! [[ "$MSG" =~ ^FLUSH$ ]]; then
 
     # any match leads to an ignore
-    if [[ "$@" =~ ${IGNORES}${AP_ETHERS} ]]; then
+    if [[ "$MSG" =~ ${IGNORES}${AP_ETHERS} ]]; then
         printf "ignored\n"
     else
         (
             exec 200> "$LOGLOCK"
             flock -x 200
-            printf "$@\n" >> "$LOGBUFF"
+            # '%s' -- never let a log line act as the printf format string
+            printf '%s\n' "$MSG" >> "$LOGBUFF"
         )
-        (flock -n 9 && { sleep $WAIT_TO_SEND; $0 FLUSH; }) 9> $0.lck&
+        # Hold the lock for the debounce window only, and drop it before
+        # flushing: a line arriving while sendmail is still running must be
+        # able to schedule the next flush, or it sits in LOGBUFF unsent
+        # until some unrelated later line happens to trigger one.
+        (flock -n 9 || exit; sleep $WAIT_TO_SEND) 9> $0.lck && $0 FLUSH &
     fi
 
 else
@@ -71,12 +80,19 @@ func rev_resolution(tocheck, \
     return tocheck
 }
 
+#
+# ETHERS holds "label", "identifier" pairs split out of AP_ETHERS, so the
+# label lives at the odd index just below its identifier. The "__END__"
+# sentinel that terminates AP_ETHERS also terminates this walk.
+#
 func replace_known_AP(line, \
-    i, a)
+    i, a, label)
 {
-    for (i = 2; ETHERS[i]; i += 2) {
+    for (i = 2; ETHERS[i] && ETHERS[i] != "__END__"; i += 2) {
         if (match(line, "^(.*)" ETHERS[i] "(.*)$", a)) {
-            return a[1] "[ " ETHERS[i - 1] " ]" a[2]
+            # padding in the cfg is only there to line the pairs up
+            label = gensub("^ +| +\$", "", "g", ETHERS[i - 1])
+            return a[1] "[ " label " ]" a[2]
         }
     }
     return line
@@ -85,6 +101,10 @@ func replace_known_AP(line, \
 BEGIN {
     system("rm $0_$$.awk")
     PRGBNAME = "${0##*/}"
+
+    # AP_ETHERS comes in via -v (not interpolated into this script) so that
+    # quotes or backslashes in a cfg label cannot break the generated awk
+    split(AP_ETHERS, ETHERS, "|")
 
     # LOGBATCH is provided by the calling script through shell interpolation
     # (it hands us a private, already rotated-off copy of the shared buffer
@@ -161,6 +181,6 @@ BEGIN {
     [ -f "$LOGBUFF" ] && mv "$LOGBUFF" "$LOGBATCH"
 )
 
-exec $PP awk -f $0_$$.awk
+exec $PP awk -v AP_ETHERS="$AP_ETHERS" -f $0_$$.awk
 
 fi
