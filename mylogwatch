@@ -8,7 +8,8 @@ WAIT_TO_SEND=5              # time span collecting messages until flush
 RUNDIR="${TMPDIR:-/tmp}"    # all runtime state lives here; nothing is ever
                             # written next to the script, so it can be
                             # installed read-only (e.g. /usr/local/sbin)
-IGNORES="^$"                # ignores empty lines per default
+IGNORES=""                  # extra drop patterns from the cfg; blank lines
+                            # are always dropped, cfg or not
 PRIV_CMD=""                 # e.g. "sudo" or a custom wrapper, only used when not root
 . $0.cfg 2> /dev/null       # optionally cfg ignores (no error if missing)
 
@@ -23,18 +24,22 @@ SCHEDLOCK="$LOGBUFF.lck"    # SCHEDLOCK debounces the flush, so a burst yields o
 # forgets to quote cannot silently lose everything after the first word
 MSG="$*"
 
-# An empty alternative matches every line, so a cfg that sets IGNORES with
-# the conventional trailing '|' but leaves AP_ETHERS unset would silently
-# discard the whole log. Drop empty alternatives before using the pattern.
-IGNORE_RE="${IGNORES}${AP_ETHERS}"
+# Only IGNORES decides what gets dropped. AP_ETHERS is a label table, not an
+# ignore list: folding it in here matched any line merely mentioning a known
+# device and discarded it, which is exactly the line replace_known_AP() is
+# meant to annotate.
+#
+# An empty alternative matches every line, so a cfg whose IGNORES carries the
+# conventional trailing '|' would otherwise silently discard the whole log.
+IGNORE_RE="$IGNORES"
 while [[ "$IGNORE_RE" == *'||'* ]]; do IGNORE_RE="${IGNORE_RE//||/|}"; done
 IGNORE_RE="${IGNORE_RE#|}"
 IGNORE_RE="${IGNORE_RE%|}"
 
 if ! [[ "$MSG" =~ ^FLUSH$ ]]; then
 
-    # any match leads to an ignore
-    if [[ -n "$IGNORE_RE" && "$MSG" =~ $IGNORE_RE ]]; then
+    # any match leads to an ignore; a blank line always does
+    if [[ -z "$MSG" || ( -n "$IGNORE_RE" && "$MSG" =~ $IGNORE_RE ) ]]; then
         printf "ignored\n"
     else
         (
