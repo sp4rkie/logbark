@@ -2,33 +2,29 @@
 
 [ -t 0 ] || exec >> $0.log 2>&1
 
-WAIT_TO_SEND=5
-(flock -n 9 && { sleep $WAIT_TO_SEND; $0 FLUSH; }) 9> $0.lck&
-
-# LOGBUFF is shared/appended by every invocation and drained by FLUSH;
-# LOGLOCK guards that access so a flush can never race an append (see below).
-LOGBUFF="/tmp/mylogwatch"
-LOGLOCK="$LOGBUFF.lock"
-
 # Site-local settings (ignore/replace rules, EMAIL_DOMAIN override, PRIV_CMD)
 # live in $0.cfg, which is deliberately not part of this repo -- copy
 # mylogwatch.cfg.example next to this script and adjust it per host.
-IGNORES="^$"            # ignores empty lines per default
-PRIV_CMD=""             # e.g. "sudo" or a custom wrapper, only used when not root
-. $0.cfg 2> /dev/null   # optionally cfg ignores (no error if missing)
+WAIT_TO_SEND=5              # time span collecting messages until flush
+LOGBUFF="/tmp/mylogwatch"   # LOGBUFF is shared/appended by every invocation and drained by FLUSH;
+LOGLOCK="$LOGBUFF.lock"     # LOGLOCK guards that access so a flush can never race an append (see below).
+IGNORES="^$"                # ignores empty lines per default
+PRIV_CMD=""                 # e.g. "sudo" or a custom wrapper, only used when not root
+. $0.cfg 2> /dev/null       # optionally cfg ignores (no error if missing)
 
 if ! [[ "$@" =~ ^FLUSH$ ]]; then
 
-# any match leads to an ignore
-if [[ "$@" =~ ${IGNORES}${AP_ETHERS} ]]; then
-    printf "ignored\n"
-else
-    (
-        exec 200> "$LOGLOCK"
-        flock -x 200
-        printf "$@\n" >> "$LOGBUFF"
-    )
-fi
+    # any match leads to an ignore
+    if [[ "$@" =~ ${IGNORES}${AP_ETHERS} ]]; then
+        printf "ignored\n"
+    else
+        (
+            exec 200> "$LOGLOCK"
+            flock -x 200
+            printf "$@\n" >> "$LOGBUFF"
+        )
+        (flock -n 9 && { sleep $WAIT_TO_SEND; $0 FLUSH; }) 9> $0.lck&
+    fi
 
 else
 
