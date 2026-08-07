@@ -7,46 +7,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `mylogwatch` is a single executable bash script (plus a sourced config) that
 buffers interesting log lines, coalesces them over a short window, and mails the
 batch via `sendmail`. There is no build system, no dependency manifest, and no
-test suite — the repo is the deliverable. See `README.md` for end-user setup and
-the full config-option table; this file covers the internals and the dev loop.
-
-## Development
-
-There is nothing to build or install. Syntax-check after any edit:
-
-```bash
-bash -n mylogwatch
-```
-
-### Running it without mailing anything
-
-Don't test against a real MTA. Work on a *copy* with the sendmail pipe stubbed
-out and runtime state pointed somewhere disposable — this exercises the real
-batching, locking, rDNS and label-substitution paths and leaves the mail in a
-file you can read:
-
-```bash
-mkdir -p /tmp/mw/run && cp mylogwatch /tmp/mw/ && cd /tmp/mw
-sed -i 's#SENDMAIL = "/usr/sbin/sendmail -t -f " SMTP_FROM#SENDMAIL = "cat >> /tmp/mw_sent.log"#' mylogwatch
-cat > mylogwatch.cfg <<'EOF'                      # the cfg must sit next to the copy
-RUNDIR="/tmp/mw/run"
-WAIT_TO_SEND=2
-AP_ETHERS='my-router      |AA:BB:CC:DD:EE:FF|^$|__END__'
-EOF
-
-./mylogwatch "Aug  7 10:00:00 host kernel: link up from 8.8.8.8"
-./mylogwatch "Aug  7 10:00:01 host device AA:BB:CC:DD:EE:FF joined"
-sleep 4 && cat /tmp/mw_sent.log
-```
-
-`./mylogwatch FLUSH` forces an immediate flush instead of waiting out
-`WAIT_TO_SEND`. Diagnostics from non-tty runs land in `$RUNDIR/mylogwatch.log`,
-which is the first place to look when a line silently disappears. Clean up
-`$RUNDIR/mylogwatch*` between runs — a stale buffer or lock will skew the next
-test.
-
-To test a `PRIV_CMD` or `/etc/nullmailer/remotes` code path you need root;
-otherwise set `EMAIL_DOMAIN` in the cfg and skip it.
+test suite — the repo is the deliverable. `README.md` carries end-user setup,
+the full config-option table, and the dev loop (`bash -n`, plus the
+stubbed-sendmail recipe for exercising a change without a real MTA) — start
+there, then come back here for the internals behind it.
 
 ## Architecture
 

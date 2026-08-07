@@ -101,3 +101,41 @@ format of the two list-shaped ones.
   private file before mailing it, so a line arriving mid-flush is never
   silently dropped, and a slow mail send never blocks new appends.
 - Force an immediate flush manually with `mylogwatch FLUSH`.
+
+## Development
+
+There is nothing to build or install — the script is the deliverable.
+Syntax-check it after any edit:
+
+```bash
+bash -n mylogwatch
+```
+
+### Testing without mailing anything
+
+Don't test against a real MTA. Work on a *copy* with the sendmail pipe
+stubbed out and runtime state pointed somewhere disposable — that still
+exercises the real batching, locking, reverse-DNS and label-substitution
+paths, and leaves the message in a file you can read:
+
+```bash
+mkdir -p /tmp/mw/run && cp mylogwatch /tmp/mw/ && cd /tmp/mw
+sed -i 's#SENDMAIL = "/usr/sbin/sendmail -t -f " SMTP_FROM#SENDMAIL = "cat >> /tmp/mw_sent.log"#' mylogwatch
+cat > mylogwatch.cfg <<'EOF'          # the cfg must sit next to the copy
+RUNDIR="/tmp/mw/run"
+WAIT_TO_SEND=2
+AP_ETHERS='my-router      |AA:BB:CC:DD:EE:FF|^$|__END__'
+EOF
+
+./mylogwatch "Aug  7 10:00:00 host kernel: link up from 8.8.8.8"
+./mylogwatch "Aug  7 10:00:01 host device AA:BB:CC:DD:EE:FF joined"
+sleep 4 && cat /tmp/mw_sent.log
+```
+
+`./mylogwatch FLUSH` cuts the wait short. Diagnostics from non-tty runs
+land in `$RUNDIR/mylogwatch.log`, which is the first place to look when
+a line silently disappears, and `$RUNDIR/mylogwatch*` is worth clearing
+between runs — a stale buffer or lock will skew the next test.
+
+Testing a `PRIV_CMD` or `/etc/nullmailer/remotes` code path needs root;
+otherwise set `EMAIL_DOMAIN` in the config and skip it.
