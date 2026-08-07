@@ -31,3 +31,9 @@
 # Optional: command prefix used to run awk when not root (needed to
 # read /etc/nullmailer/remotes). Leave unset to run unprivileged.
 #PRIV_CMD="sudo"
+
+# Optional: seconds to collect lines before flushing a batch.
+#WAIT_TO_SEND=5
+
+# Optional: where all runtime state is kept.
+#RUNDIR=/tmp

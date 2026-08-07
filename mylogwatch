@@ -32,8 +32,11 @@ MSG="$*"
 # An empty alternative matches every line, so a cfg whose IGNORES carries the
 # conventional trailing '|' would otherwise silently discard the whole log.
 IGNORE_RE="$IGNORES"
+# replace all double || with |
 while [[ "$IGNORE_RE" == *'||'* ]]; do IGNORE_RE="${IGNORE_RE//||/|}"; done
+# remove | from the front
 IGNORE_RE="${IGNORE_RE#|}"
+# remove | from the back
 IGNORE_RE="${IGNORE_RE%|}"
 
 if ! [[ "$MSG" =~ ^FLUSH$ ]]; then
@@ -169,7 +172,9 @@ BEGIN {
     if (line) {
         print "From: " ADDR_FROM                    | SENDMAIL
         print "To: " ADDR_TO                        | SENDMAIL
-        line = rev_resolution(gensub("^( *|<[^>]*>)", "", "g", line))
+
+        line = gensub("^( *|<[^>]*>)", "", "g", line)
+        line = rev_resolution(line)
         line = replace_known_AP(line)
 
         #
