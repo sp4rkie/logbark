@@ -21,6 +21,12 @@ single message and the cycle starts over on the next new line — a line
 arriving while the mail is still being sent simply opens the next
 batch.
 
+- [Requirements](#requirements)
+- [Setup](#setup)
+- [Configuration](#configuration)
+- [Notes](#notes)
+- [Development](#development)
+
 ## Requirements
 
 - `bash`
