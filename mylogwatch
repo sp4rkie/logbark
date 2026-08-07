@@ -32,11 +32,11 @@ MSG="$*"
 # An empty alternative matches every line, so a cfg whose IGNORES carries the
 # conventional trailing '|' would otherwise silently discard the whole log.
 IGNORE_RE="$IGNORES"
-# replace all double || with |
+# coalesce all multiple | into one
 while [[ "$IGNORE_RE" == *'||'* ]]; do IGNORE_RE="${IGNORE_RE//||/|}"; done
-# remove | from the front
+# remove the leading | left over by the collapse above
 IGNORE_RE="${IGNORE_RE#|}"
-# remove | from the back
+# remove the trailing | left over by the collapse above
 IGNORE_RE="${IGNORE_RE%|}"
 
 if ! [[ "$MSG" =~ ^FLUSH$ ]]; then
