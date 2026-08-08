@@ -90,22 +90,16 @@ batch.
 If `rsyslog` is already collecting your logs, this is the least-effort
 way to get instant mail about reboots, disk errors, USB disconnects and
 the like: one template that emits the raw message, plus one filter rule
-per pattern you care about. Drop something like this into
-`/etc/rsyslog.d/xlog-all.conf`:
+whose pattern lists every alert you care about. Drop something like
+this into `/etc/rsyslog.d/xlog-all.conf`:
 
 ```
 $template mylogargs,"%rawmsg%"
-:rawmsg, ereregex, "activated.*BogoMIPS"               ^/root/bin/mylogwatch; mylogargs
-:rawmsg, ereregex, "sector"                            ^/root/bin/mylogwatch; mylogargs
-:rawmsg, ereregex, "FAILED"                            ^/root/bin/mylogwatch; mylogargs
-:rawmsg, ereregex, "ERROR"                             ^/root/bin/mylogwatch; mylogargs
-:rawmsg, ereregex, "Error"                             ^/root/bin/mylogwatch; mylogargs
-:rawmsg, ereregex, "EXT4-fs error"                     ^/root/bin/mylogwatch; mylogargs
-:rawmsg, ereregex, "usb .*: (Product:|USB disconnect)" ^/root/bin/mylogwatch; mylogargs
+:rawmsg, ereregex, "activated.*BogoMIPS|sector|FAILED|ERROR|Error|EXT4-fs error|usb .*: (Product:|USB disconnect)" ^/root/bin/mylogwatch; mylogargs
 ```
 
 then `systemctl restart rsyslog`. That's the whole integration —
-adding a new alert is one more line.
+adding a new alert is one more alternative in the pattern.
 
 A few things worth knowing about that config:
 
@@ -116,11 +110,16 @@ A few things worth knowing about that config:
 - `%rawmsg%` passes the message as received, timestamps and all, which
   is what `mylogwatch` wants — it does its own tidying (kernel
   timestamp in the subject, reverse DNS, device labels).
-- The patterns are POSIX extended regexes and case-sensitive, which is
-  why `ERROR` and `Error` are two separate rules.
-- Rules are independent, so a line matching several of them invokes the
-  script several times and appears once per match in the mail. Keep the
-  patterns disjoint, or let `IGNORES` mop up what you don't want.
+- The pattern is a POSIX extended regex and case-sensitive, which is
+  why both `ERROR` and `Error` appear in it. Alternatives may nest, as
+  the `usb` one does.
+- Keeping it to a single rule matters: rsyslog evaluates rules
+  independently, so splitting the alternatives into one rule each makes
+  a line that matches two of them invoke the script twice and show up
+  twice in the mail. One rule hands each line over exactly once, however
+  many alternatives it hits. The cost is one long line in the config;
+  split it back into a rule per pattern if you find that easier to
+  read, and live with the occasional doubled line.
 - `mylogwatch` returns as soon as it has buffered the line — the flush
   is backgrounded — so rsyslog is never held up by a slow `sendmail`.
 - The shell-execute action forks a process per matching message, which
