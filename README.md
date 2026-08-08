@@ -89,44 +89,62 @@ batch.
 
 If `rsyslog` is already collecting your logs, this is the least-effort
 way to get instant mail about reboots, disk errors, USB disconnects and
-the like: one template that emits the raw message, plus one filter rule
-whose pattern lists every alert you care about. Drop something like
-this into `/etc/rsyslog.d/xlog-all.conf`:
+the like: one template that emits the raw message, plus one `if` whose
+conditions list every alert you care about, one per line. Drop
+something like this into `/etc/rsyslog.d/xlog-all.conf`:
 
 ```
-$template mylogargs,"%rawmsg%"
-:rawmsg, ereregex, "activated.*BogoMIPS|sector|FAILED|ERROR|Error|EXT4-fs error|usb .*: (Product:|USB disconnect)" ^/root/bin/mylogwatch; mylogargs
+template(name="mylogargs" type="string" string="%rawmsg%")
+
+if  $rawmsg contains "sector"
+ or $rawmsg contains "FAILED"
+ or $rawmsg contains "ERROR"
+ or $rawmsg contains "Error"
+ or $rawmsg contains "EXT4-fs error"
+ or re_match($rawmsg, "activated.*BogoMIPS")
+ or re_match($rawmsg, "usb .*: (Product:|USB disconnect)")
+then ^/root/bin/mylogwatch;mylogargs
 ```
 
-then `systemctl restart rsyslog`. That's the whole integration —
-adding a new alert is one more alternative in the pattern.
+Check it with `rsyslogd -N1 -f /etc/rsyslog.d/xlog-all.conf`, then
+`systemctl restart rsyslog`. That's the whole integration — adding a
+new alert is one more `or` line.
 
 A few things worth knowing about that config:
 
-- `^/path/prog; template` is rsyslog's shell-execute action: it runs
-  the program once per matching message, with the formatted template as
-  its single argument. The path must be absolute and the file
-  executable by rsyslog.
-- `%rawmsg%` passes the message as received, timestamps and all, which
-  is what `mylogwatch` wants — it does its own tidying (kernel
-  timestamp in the subject, reverse DNS, device labels).
-- The pattern is a POSIX extended regex and case-sensitive, which is
-  why both `ERROR` and `Error` appear in it. Alternatives may nest, as
-  the `usb` one does.
-- Keeping it to a single rule matters: rsyslog evaluates rules
-  independently, so splitting the alternatives into one rule each makes
-  a line that matches two of them invoke the script twice and show up
-  twice in the mail. One rule hands each line over exactly once, however
-  many alternatives it hits. The cost is one long line in the config;
-  split it back into a rule per pattern if you find that easier to
-  read, and live with the occasional doubled line.
+- `^/path/prog;template` is rsyslog's shell-execute action, usable as
+  the `then` branch of a RainerScript `if`: it runs the program once per
+  matching message, with the formatted template as its single argument.
+  The path must be absolute and the file executable by rsyslog.
+- `%rawmsg%` passes the message as received, which for anything arriving
+  over a socket includes the numeric priority prefix (`<13>`) ahead of
+  the timestamp. That is what `mylogwatch` wants — it strips the prefix
+  and does its own tidying (kernel timestamp in the subject, reverse
+  DNS, device labels).
+- `contains` is a plain case-sensitive substring test and is cheaper
+  than a regex, so it covers most of the list; `re_match()` is there
+  only for the two conditions that actually need POSIX ERE. Both are
+  case-sensitive, which is why `ERROR` and `Error` are listed
+  separately — `contains_i`/`re_match_i` would fold in lowercase
+  `error` too, and with it every line mentioning `EXT4-fs error`.
+- Keeping this to a single `if` matters: rsyslog evaluates rules
+  independently, so splitting the conditions into one rule each makes a
+  line matching two of them invoke the script twice and show up twice
+  in the mail. One `if` hands each line over exactly once, however many
+  of its conditions hold.
 - `mylogwatch` returns as soon as it has buffered the line — the flush
   is backgrounded — so rsyslog is never held up by a slow `sendmail`.
 - The shell-execute action forks a process per matching message, which
-  is fine at the rate these filters fire. For a pattern that matches
+  is fine at the rate these conditions fire. For one that matches
   hundreds of lines a second, rsyslog's `omprog` keeps a single process
   alive instead, but it feeds messages on stdin rather than as
   arguments, so it needs a small read-loop wrapper around the script.
+- The legacy one-line form does the same job:
+  `$template mylogargs,"%rawmsg%"` plus
+  `:rawmsg, ereregex, "sector|FAILED|..."  ^/root/bin/mylogwatch; mylogargs`.
+  RainerScript is used above only because its condition list can span
+  lines; the legacy filter cannot be wrapped, so that pattern grows into
+  one very long line.
 
 The `IGNORES` config option is the second half of this: rsyslog decides
 what reaches the script at all, `IGNORES` drops the known-boring
