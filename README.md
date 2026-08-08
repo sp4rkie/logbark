@@ -23,9 +23,12 @@ batch.
 
 - [Requirements](#requirements)
 - [Setup](#setup)
+  - [Wiring it into rsyslog](#wiring-it-into-rsyslog)
 - [Configuration](#configuration)
+- [The mail it sends](#the-mail-it-sends)
 - [Notes](#notes)
 - [Development](#development)
+  - [Testing without mailing anything](#testing-without-mailing-anything)
 
 ## Requirements
 
@@ -73,13 +76,62 @@ batch.
    done
    ```
 
-   or point a syslog daemon's program/exec action, a udev rule, or a
-   cron job at it — anything that can call it once per line of
-   interest.
+   or point a syslog daemon's program/exec action (see
+   [Wiring it into rsyslog](#wiring-it-into-rsyslog) below), a udev
+   rule, or a cron job at it — anything that can call it once per line
+   of interest.
 
 4. If it won't run as root, set `PRIV_CMD` in `mylogwatch.cfg` (e.g.
    `PRIV_CMD="sudo"`) — root is needed to read
    `/etc/nullmailer/remotes` for smart-host detection.
+
+### Wiring it into rsyslog
+
+If `rsyslog` is already collecting your logs, this is the least-effort
+way to get instant mail about reboots, disk errors, USB disconnects and
+the like: one template that emits the raw message, plus one filter rule
+per pattern you care about. Drop something like this into
+`/etc/rsyslog.d/xlog-all.conf`:
+
+```
+$template mylogargs,"%rawmsg%"
+:rawmsg, ereregex, "activated.*BogoMIPS"                    ^/root/bin/mylogwatch; mylogargs
+:rawmsg, ereregex, "sector"                                 ^/root/bin/mylogwatch; mylogargs
+:rawmsg, ereregex, "FAILED"                                 ^/root/bin/mylogwatch; mylogargs
+:rawmsg, ereregex, "ERROR"                                  ^/root/bin/mylogwatch; mylogargs
+:rawmsg, ereregex, "Error"                                  ^/root/bin/mylogwatch; mylogargs
+:rawmsg, ereregex, "EXT4-fs error"                          ^/root/bin/mylogwatch; mylogargs
+:rawmsg, ereregex, "usb .*: (Product:|USB disconnect)"      ^/root/bin/mylogwatch; mylogargs
+```
+
+then `systemctl restart rsyslog`. That's the whole integration —
+adding a new alert is one more line.
+
+A few things worth knowing about that config:
+
+- `^/path/prog; template` is rsyslog's shell-execute action: it runs
+  the program once per matching message, with the formatted template as
+  its single argument. The path must be absolute and the file
+  executable by rsyslog.
+- `%rawmsg%` passes the message as received, timestamps and all, which
+  is what `mylogwatch` wants — it does its own tidying (kernel
+  timestamp in the subject, reverse DNS, device labels).
+- The patterns are POSIX extended regexes and case-sensitive, which is
+  why `ERROR` and `Error` are two separate rules.
+- Rules are independent, so a line matching several of them invokes the
+  script several times and appears once per match in the mail. Keep the
+  patterns disjoint, or let `IGNORES` mop up what you don't want.
+- `mylogwatch` returns as soon as it has buffered the line — the flush
+  is backgrounded — so rsyslog is never held up by a slow `sendmail`.
+- The shell-execute action forks a process per matching message, which
+  is fine at the rate these filters fire. For a pattern that matches
+  hundreds of lines a second, rsyslog's `omprog` keeps a single process
+  alive instead, but it feeds messages on stdin rather than as
+  arguments, so it needs a small read-loop wrapper around the script.
+
+The `IGNORES` config option is the second half of this: rsyslog decides
+what reaches the script at all, `IGNORES` drops the known-boring
+remainder without touching the rsyslog config.
 
 ## Configuration
 
@@ -94,6 +146,30 @@ format of the two list-shaped ones.
 | `PRIV_CMD` | *(empty)* | Command prefix used to run `awk` when not root, e.g. `sudo`. |
 | `RUNDIR` | `$TMPDIR`, else `/tmp` | Where all runtime state is kept. |
 | `WAIT_TO_SEND` | `5` | Seconds to collect lines before flushing a batch. |
+
+## The mail it sends
+
+One batch is one mail, sent from and to
+`mylogwatch.<short-hostname>@<EMAIL_DOMAIN>`. The subject is the first
+line of the batch (with a leading kernel timestamp like
+`[   12.345678] ` stripped off); the body holds every line of the
+batch, in arrival order, first line included.
+
+When a batch holds more than one line, the subject is prefixed with
+`[ +N ]`, where N counts the lines *below* the first one. Without that
+marker the extra lines are easy to miss, since only the first one is
+ever visible in a mail client's subject list:
+
+```
+Subject: [ +2 ] EXT4-fs error (device sda1): ext4_find_entry:1455: inode #2
+
+EXT4-fs error (device sda1): ext4_find_entry:1455: inode #2
+sd 0:0:0:0: [sda] Unrecovered read error - auto reallocate failed sector 1234
+usb 1-1: USB disconnect, device number 7
+```
+
+No prefix means the mail is a single line and the subject is the whole
+story.
 
 ## Notes
 
