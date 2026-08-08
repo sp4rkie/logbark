@@ -202,7 +202,7 @@ paths, and leaves the message in a file you can read:
 
 ```bash
 mkdir -p /tmp/mw/run && cp mylogwatch /tmp/mw/ && cd /tmp/mw
-sed -i 's#SENDMAIL = "/usr/sbin/sendmail -t -f " SMTP_FROM#SENDMAIL = "cat >> /tmp/mw_sent.log"#' mylogwatch
+sed -i 's#^ *SENDMAIL = .*#    SENDMAIL = "cat >> /tmp/mw_sent.log"#' mylogwatch
 cat > mylogwatch.cfg <<'EOF'          # the cfg must sit next to the copy
 RUNDIR="/tmp/mw/run"
 WAIT_TO_SEND=2
