@@ -185,14 +185,26 @@ BEGIN {
         sline = gensub("^\\\[[0-9 .]+\\\] ", "", "g", line)
         sline = gensub("^.*[^0-9.]([0-9.]+ BogoMIPS).*$", "\\\1", "g", sline)
 
-        print "Subject: " (sline ? sline : "empty") | SENDMAIL
-        print ""                                    | SENDMAIL
-        print line                                  | SENDMAIL
+        # The subject can only be built once cnt is known, i.e. after the
+        # whole batch has been read, so the body has to be collected first.
+        # Park the first line: the loop below reuses 'line' as its own
+        # getline target and would otherwise leave us with the last one.
+        fline = line
+
         while (getline line < LOGBATCH > 0) {
-            line = rev_resolution(gensub("^( *|<[^>]*>)", "", "g", line))
+            line = gensub("^( *|<[^>]*>)", "", "g", line)
+            line = rev_resolution(line)
             line = replace_known_AP(line)
-            print line                              | SENDMAIL
+            COLLECTED = COLLECTED line "\n"
+            ++cnt
         }
+        print "Subject: " (cnt ? "[ +" cnt " ] " : "") \
+                          (sline ? sline : "empty") | SENDMAIL
+        print ""                                    | SENDMAIL
+        print fline                                 | SENDMAIL
+        # COLLECTED already ends in a newline (and is empty for a
+        # single-line batch), so printf rather than print
+        printf "%s", COLLECTED                      | SENDMAIL
         close(SENDMAIL)
     } else {
         print "EMPTY"

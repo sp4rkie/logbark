@@ -37,6 +37,11 @@ is load-bearing and easy to break:
   Follow that pattern for any new cfg value that carries user text.
 - The generated file deletes itself from awk's `BEGIN` block, so it never
   accumulates in `RUNDIR`.
+- The subject carries a `[ +N ]` prefix counting the lines after the first, so
+  it can only be printed once the whole batch has been read. Hence the body is
+  buffered in `COLLECTED` and emitted after the headers, and the first line is
+  parked in `fline` before the `getline` loop — that loop reuses `line`, and
+  printing `line` after it emits the *last* line instead.
 
 Requires **gawk** — `gensub()` and 3-argument `match()` are GNU extensions;
 mawk/POSIX awk will fail at runtime, not at `bash -n`.
