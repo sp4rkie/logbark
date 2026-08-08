@@ -95,13 +95,13 @@ per pattern you care about. Drop something like this into
 
 ```
 $template mylogargs,"%rawmsg%"
-:rawmsg, ereregex, "activated.*BogoMIPS"                    ^/root/bin/mylogwatch; mylogargs
-:rawmsg, ereregex, "sector"                                 ^/root/bin/mylogwatch; mylogargs
-:rawmsg, ereregex, "FAILED"                                 ^/root/bin/mylogwatch; mylogargs
-:rawmsg, ereregex, "ERROR"                                  ^/root/bin/mylogwatch; mylogargs
-:rawmsg, ereregex, "Error"                                  ^/root/bin/mylogwatch; mylogargs
-:rawmsg, ereregex, "EXT4-fs error"                          ^/root/bin/mylogwatch; mylogargs
-:rawmsg, ereregex, "usb .*: (Product:|USB disconnect)"      ^/root/bin/mylogwatch; mylogargs
+:rawmsg, ereregex, "activated.*BogoMIPS"               ^/root/bin/mylogwatch; mylogargs
+:rawmsg, ereregex, "sector"                            ^/root/bin/mylogwatch; mylogargs
+:rawmsg, ereregex, "FAILED"                            ^/root/bin/mylogwatch; mylogargs
+:rawmsg, ereregex, "ERROR"                             ^/root/bin/mylogwatch; mylogargs
+:rawmsg, ereregex, "Error"                             ^/root/bin/mylogwatch; mylogargs
+:rawmsg, ereregex, "EXT4-fs error"                     ^/root/bin/mylogwatch; mylogargs
+:rawmsg, ereregex, "usb .*: (Product:|USB disconnect)" ^/root/bin/mylogwatch; mylogargs
 ```
 
 then `systemctl restart rsyslog`. That's the whole integration —
