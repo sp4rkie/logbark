@@ -40,8 +40,8 @@ is load-bearing and easy to break:
 - The subject carries a `[ +N ]` prefix counting the lines after the first, so
   it can only be printed once the whole batch has been read. Hence the body is
   buffered in `COLLECTED` and emitted after the headers, and the first line is
-  parked in `fline` before the `getline` loop — that loop reuses `line`, and
-  printing `line` after it emits the *last* line instead.
+  appended to `COLLECTED` before the `getline` loop — that loop reuses `line`,
+  and printing `line` after it emits the *last* line instead.
 
 Requires **gawk** — `gensub()` and 3-argument `match()` are GNU extensions;
 mawk/POSIX awk will fail at runtime, not at `bash -n`.

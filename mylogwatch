@@ -187,9 +187,9 @@ BEGIN {
 
         # The subject can only be built once cnt is known, i.e. after the
         # whole batch has been read, so the body has to be collected first.
-        # Park the first line: the loop below reuses 'line' as its own
+        # Collect this line now: the loop below reuses 'line' as its own
         # getline target and would otherwise leave us with the last one.
-        fline = line
+        COLLECTED = COLLECTED line "\n"
 
         while (getline line < LOGBATCH > 0) {
             line = gensub("^( *|<[^>]*>)", "", "g", line)
@@ -201,9 +201,7 @@ BEGIN {
         print "Subject: " (cnt ? "[ +" cnt " ] " : "") \
                           (sline ? sline : "empty") | SENDMAIL
         print ""                                    | SENDMAIL
-        print fline                                 | SENDMAIL
-        # COLLECTED already ends in a newline (and is empty for a
-        # single-line batch), so printf rather than print
+        # COLLECTED already ends in a newline, so printf rather than print
         printf "%s", COLLECTED                      | SENDMAIL
         close(SENDMAIL)
     } else {
