@@ -16,9 +16,10 @@ there, then come back here for the internals behind it.
 
 **One script, two modes.** A normal invocation takes one log line as `$*`,
 filters it, appends it to the shared buffer, and schedules a flush by
-re-executing *itself* as `$0 FLUSH &`. The `FLUSH` branch is the entire second
-half of the file. Both halves share the config and lock-path setup at the top,
-so a change to `RUNDIR`/`PRGBNAME` naming affects both automatically.
+re-executing *itself* as `$FLUSH_WRAPPER "$SELF" FLUSH &`. The `FLUSH` branch is
+the entire second half of the file. Both halves share the config and lock-path
+setup at the top, so a change to `RUNDIR`/`PRGBNAME` naming affects both
+automatically.
 
 **The awk program is generated, not shipped.** The FLUSH branch writes a gawk
 program to an `mktemp` file and `exec`s it; that program does the mail
@@ -63,11 +64,41 @@ under `RUNDIR`, all named after the script:
 The inline comments at these spots record bugs that were actually hit; preserve
 that behavior when refactoring.
 
+**`FLUSH_WRAPPER` launches the flush, and only the flush.** It is a command
+*prefix* the `FLUSH` re-exec is placed behind, empty by default. It exists
+because the two halves have different privilege needs: the half that runs
+`sendmail` sometimes has to escape a sandbox the appending half sits in quite
+happily. `README.md` carries the motivating case (Debian 13's hardened
+`rsyslog.service`, where `NoNewPrivileges=yes` strips the setuid bit from
+nullmailer's queue helper and mail is accepted but never delivered). What
+matters here is the mechanics:
+
+- **It is unquoted on purpose.** A prefix has to word-split into argv, so
+  quoting it would hand the whole string over as one argv[0] and break every
+  multi-word wrapper. The line reads like a quoting bug and carries a comment
+  saying it isn't — keep that comment if you touch it.
+- **`$SELF` is `$0` made absolute**, computed once at the top with a `case`, and
+  deliberately *not* with `realpath`/`readlink -f`. `systemd-run` rejects a
+  relative executable, but resolving symlinks would change which cfg gets
+  sourced: `$SELF.cfg` has to keep naming exactly the file `$0.cfg` names. Don't
+  "improve" it into a symlink-resolving form.
+- **A wrapper constrains `RUNDIR`.** A wrapper that re-parents the flush out of
+  the caller's mount namespace puts the two halves on different `/tmp`s if the
+  caller has `PrivateTmp=yes` and `RUNDIR` is left at its default: the buffer is
+  appended in one and read in the other, and the flush mails nothing. There is
+  no error anywhere — it just goes quiet. Any cfg setting `FLUSH_WRAPPER` must
+  set `RUNDIR` outside `/tmp` as well.
+- **A transient unit name needs `$$`, not a fixed string.** The debounce lock is
+  released before the flush runs (above), so two flushes can legitimately
+  overlap and a fixed `--unit=` would make the second fail to start.
+
 **Config.** `. $0.cfg` sources site settings on every run, silently if absent.
 Because it is `$0`-relative, the cfg must be named after and live beside the
-script *as invoked* — a copy of the script needs its own copy of the cfg. The
-stderr/stdout redirect to the log file happens only *after* the source, so
-`RUNDIR` from the cfg can steer it; don't move that redirect earlier.
+script *as invoked* — a copy of the script needs its own copy of the cfg, and
+`$SELF` is built the way it is (above) so a wrapped flush still resolves to that
+same cfg. The stderr/stdout redirect to the log file happens only *after* the
+source, so `RUNDIR` from the cfg can steer it; don't move that redirect
+earlier.
 
 `IGNORES` is a `|`-joined regex the cfg conventionally terminates with
 `__END__|`. The script collapses runs of `||` to a single `|`, then strips one
