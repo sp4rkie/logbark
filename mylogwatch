@@ -4,6 +4,13 @@
 # live in $0.cfg, which is deliberately not part of this repo -- copy
 # mylogwatch.cfg.example next to this script and adjust it per host.
 PRGBNAME="${0##*/}"
+# FLUSH_WRAPPER may hand this path to a launcher that insists on an absolute
+# one (systemd-run does). Absolutize without resolving symlinks, so "$SELF.cfg"
+# still names exactly the cfg file that "$0.cfg" names.
+case "$0" in
+    /*) SELF="$0" ;;
+    *)  SELF="$PWD/$0" ;;
+esac
 WAIT_TO_SEND=5              # time span collecting messages until flush
 RUNDIR="${TMPDIR:-/tmp}"    # all runtime state lives here; nothing is ever
                             # written next to the script, so it can be
@@ -11,6 +18,8 @@ RUNDIR="${TMPDIR:-/tmp}"    # all runtime state lives here; nothing is ever
 IGNORES=""                  # extra drop patterns from the cfg; blank lines
                             # are always dropped, cfg or not
 PRIV_CMD=""                 # e.g. "sudo" or a custom wrapper, only used when not root
+FLUSH_WRAPPER=""            # command prefix the FLUSH pass is launched through;
+                            # empty means launch it directly as a plain child
 . $0.cfg 2> /dev/null       # optionally cfg ignores (no error if missing)
 
 LOGBUFF="$RUNDIR/$PRGBNAME" # LOGBUFF is shared/appended by every invocation and drained by FLUSH;
@@ -55,7 +64,12 @@ if ! [[ "$MSG" =~ ^FLUSH$ ]]; then
         # flushing: a line arriving while sendmail is still running must be
         # able to schedule the next flush, or it sits in LOGBUFF unsent
         # until some unrelated later line happens to trigger one.
-        (flock -n 9 || exit; sleep $WAIT_TO_SEND) 9> "$SCHEDLOCK" && $0 FLUSH &
+        #
+        # FLUSH_WRAPPER is deliberately unquoted: it is a command *prefix* that
+        # has to word-split into argv. It exists so the flush -- the half that
+        # runs sendmail -- can be pushed out of whatever sandbox the caller
+        # sits in; see mylogwatch.cfg.example.
+        (flock -n 9 || exit; sleep $WAIT_TO_SEND) 9> "$SCHEDLOCK" && $FLUSH_WRAPPER "$SELF" FLUSH &
     fi
 
 else

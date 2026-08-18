@@ -24,6 +24,7 @@ batch.
 - [Requirements](#requirements)
 - [Setup](#setup)
   - [Wiring it into rsyslog](#wiring-it-into-rsyslog)
+  - [Debian 13 (trixie) and other sandboxed rsyslog units](#debian-13-trixie-and-other-sandboxed-rsyslog-units)
 - [Configuration](#configuration)
 - [The mail it sends](#the-mail-it-sends)
 - [Notes](#notes)
@@ -150,6 +151,61 @@ The `IGNORES` config option is the second half of this: rsyslog decides
 what reaches the script at all, `IGNORES` drops the known-boring
 remainder without touching the rsyslog config.
 
+### Debian 13 (trixie) and other sandboxed rsyslog units
+
+Debian 13 ships `rsyslog.service` with a systemd sandbox that earlier
+releases did not have, and a `^program` action inherits all of it. Two
+directives in it break `mylogwatch`:
+
+- `ProtectHome=yes` replaces `/root` and `/home` with an empty,
+  mode-`000` directory inside rsyslogd's mount namespace. A script
+  installed under `/root/bin` simply does not exist as far as rsyslog is
+  concerned; the `execve()` fails and the only thing logged is
+
+      rsyslogd: program '/root/bin/mylogwatch' (pid N) exited with status 1
+
+  Installing to `/usr/local/bin` (or anywhere outside `/root` and
+  `/home`) is enough — the script never writes next to itself, so a
+  read-only location is fine.
+
+- `NoNewPrivileges=yes` is the awkward one, because it survives the move.
+  Every descendant inherits it, and it makes the kernel ignore the setuid
+  bit on exec. With `nullmailer` that strips the privilege from
+  `/usr/sbin/nullmailer-queue` (mode `4755`, owner `mail`), so the queue
+  file is created `root:root` `0600` and `nullmailer-send`, which runs as
+  user `mail`, can never open it:
+
+      nullmailer-send: Can't open file '1787077005.7947'
+
+  This one is silent from `mylogwatch`'s side — the script exits 0, the
+  mail is accepted, and it accumulates in `/var/spool/nullmailer/queue`
+  forever. `journalctl -u nullmailer` is the only place it shows.
+
+`FLUSH_WRAPPER` is the fix that does not weaken the sandbox. Only the
+`FLUSH` pass needs the privileged path — the buffering half is happy
+inside it — so launching just that half as a transient unit re-parents it
+to PID 1 and leaves rsyslog's hardening untouched:
+
+    RUNDIR=/var/lib/mylogwatch
+    FLUSH_WRAPPER="systemd-run --quiet --collect --unit=mylogwatch-flush-$$"
+
+`RUNDIR` is not optional here. `rsyslog.service` also sets
+`PrivateTmp=yes`, so the default `RUNDIR=/tmp` resolves to a per-service
+private tmpfs for the buffering half, while the transient unit sees the
+real `/tmp` — the flush would find an empty buffer and mail nothing. Any
+path outside `/tmp` that both can reach works; `/var` stays writable
+under `ProtectSystem=full`.
+
+The blunter alternative is a drop-in that turns the offending directive
+off:
+
+    # /etc/systemd/system/rsyslog.service.d/mylogwatch.conf
+    [Service]
+    NoNewPrivileges=no
+
+That works — nothing else in the shipped unit forces it back on — but it
+relaxes the hardening for everything rsyslog runs, not just this script.
+
 ## Configuration
 
 All of these are optional; see `mylogwatch.cfg.example` for the exact
@@ -160,6 +216,7 @@ format of the two list-shaped ones.
 | `IGNORES` | *(empty)* | `\|`-joined regex alternatives; a line matching any of them is dropped instead of buffered. Unanchored, so an entry matches anywhere in the line. Blank lines are always dropped regardless. |
 | `AP_ETHERS` | *(empty)* | `Label\|Identifier\|` pairs. Each identifier found in a buffered line is replaced by `[ Label ]`. A lookup table only — listing a device annotates its lines, it does not drop them. |
 | `EMAIL_DOMAIN` | smart host from `/etc/nullmailer/remotes`, else `example.com` | Domain used for the `From:`/`To:` addresses. |
+| `FLUSH_WRAPPER` | *(empty)* | Command prefix the `FLUSH` pass is launched through, e.g. `systemd-run --quiet --collect --unit=mylogwatch-flush-$$`. Empty runs it as a plain background child. See [Debian 13 (trixie) and other sandboxed rsyslog units](#debian-13-trixie-and-other-sandboxed-rsyslog-units). |
 | `PRIV_CMD` | *(empty)* | Command prefix used to run `awk` when not root, e.g. `sudo`. |
 | `RUNDIR` | `$TMPDIR`, else `/tmp` | Where all runtime state is kept. |
 | `WAIT_TO_SEND` | `5` | Seconds to collect lines before flushing a batch. |
