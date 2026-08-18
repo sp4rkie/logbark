@@ -104,7 +104,7 @@ if  $rawmsg contains "sector"
  or $rawmsg contains "EXT4-fs error"
  or re_match($rawmsg, "activated.*BogoMIPS")
  or re_match($rawmsg, "usb .*: (Product:|USB disconnect)")
-then ^/root/bin/mylogwatch;mylogargs
+then ^/usr/local/sbin/mylogwatch;mylogargs
 ```
 
 Check it with `rsyslogd -N1 -f /etc/rsyslog.d/xlog-all.conf`, then
@@ -116,7 +116,10 @@ A few things worth knowing about that config:
 - `^/path/prog;template` is rsyslog's shell-execute action, usable as
   the `then` branch of a RainerScript `if`: it runs the program once per
   matching message, with the formatted template as its single argument.
-  The path must be absolute and the file executable by rsyslog.
+  The path must be absolute and the file executable by rsyslog —
+  and, on a distribution that sandboxes the unit, reachable from
+  inside that sandbox, which rules out `/root` and `/home`; see
+  [Debian 13 (trixie) and other sandboxed rsyslog units](#debian-13-trixie-and-other-sandboxed-rsyslog-units).
 - `%rawmsg%` passes the message as received, which for anything arriving
   over a socket includes the numeric priority prefix (`<13>`) ahead of
   the timestamp. That is what `mylogwatch` wants — it strips the prefix
@@ -142,7 +145,7 @@ A few things worth knowing about that config:
   arguments, so it needs a small read-loop wrapper around the script.
 - The legacy one-line form does the same job:
   `$template mylogargs,"%rawmsg%"` plus
-  `:rawmsg, ereregex, "sector|FAILED|..."  ^/root/bin/mylogwatch; mylogargs`.
+  `:rawmsg, ereregex, "sector|FAILED|..."  ^/usr/local/sbin/mylogwatch; mylogargs`.
   RainerScript is used above only because its condition list can span
   lines; the legacy filter cannot be wrapped, so that pattern grows into
   one very long line.
@@ -164,7 +167,7 @@ directives in it break `mylogwatch`:
 
       rsyslogd: program '/root/bin/mylogwatch' (pid N) exited with status 1
 
-  Installing to `/usr/local/bin` (or anywhere outside `/root` and
+  Installing to `/usr/local/sbin` (or anywhere outside `/root` and
   `/home`) is enough — the script never writes next to itself, so a
   read-only location is fine.
 
