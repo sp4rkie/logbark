@@ -14,6 +14,19 @@ mylogwatch "Aug  5 12:00:00 host kernel: something happened"
 Quoting it is good practice, but not load-bearing — any extra arguments
 are joined with spaces rather than dropped.
 
+Called with no arguments at all, it reads log lines from standard input
+instead, one per line, until stdin closes:
+
+```
+tail -Fn0 /var/log/syslog | mylogwatch
+```
+
+That mode is for callers that start a single process and keep it alive,
+feeding it a stream — an Apache piped log, or rsyslog's `omprog`. Those
+can name the script directly, with no read-loop wrapper in between. The
+one thing it costs is config reloading: a long-lived process reads
+`mylogwatch.cfg` once at startup rather than per line.
+
 The first call in a batch schedules a flush `WAIT_TO_SEND` seconds
 later (5s by default); further calls in that window just append to the
 buffer. When the flush fires, everything buffered since is mailed as a
@@ -25,6 +38,7 @@ batch.
 - [Setup](#setup)
   - [Wiring it into rsyslog](#wiring-it-into-rsyslog)
   - [Debian 13 (trixie) and other sandboxed rsyslog units](#debian-13-trixie-and-other-sandboxed-rsyslog-units)
+  - [Wiring it into Apache](#wiring-it-into-apache)
 - [Configuration](#configuration)
 - [The mail it sends](#the-mail-it-sends)
 - [Notes](#notes)
@@ -72,15 +86,14 @@ batch.
    follow a plain text log:
 
    ```bash
-   tail -Fn0 /var/log/syslog | while IFS= read -r line; do
-       /usr/local/sbin/mylogwatch "$line"
-   done
+   tail -Fn0 /var/log/syslog | /usr/local/sbin/mylogwatch
    ```
 
    or point a syslog daemon's program/exec action (see
-   [Wiring it into rsyslog](#wiring-it-into-rsyslog) below), a udev
-   rule, or a cron job at it — anything that can call it once per line
-   of interest.
+   [Wiring it into rsyslog](#wiring-it-into-rsyslog) below), an Apache
+   piped log (see [Wiring it into Apache](#wiring-it-into-apache)), a
+   udev rule, or a cron job at it — anything that can either call it
+   once per line of interest or hand it a stream of them.
 
 4. If it won't run as root, set `PRIV_CMD` in `mylogwatch.cfg` (e.g.
    `PRIV_CMD="sudo"`) — root is needed to read
@@ -141,8 +154,10 @@ A few things worth knowing about that config:
 - The shell-execute action forks a process per matching message, which
   is fine at the rate these conditions fire. For one that matches
   hundreds of lines a second, rsyslog's `omprog` keeps a single process
-  alive instead, but it feeds messages on stdin rather than as
-  arguments, so it needs a small read-loop wrapper around the script.
+  alive instead and feeds messages on stdin rather than as arguments —
+  point it at the script with no arguments and it reads them directly.
+  Mind the caveats that come with any long-lived caller, listed under
+  [Wiring it into Apache](#wiring-it-into-apache).
 - The legacy one-line form does the same job:
   `$template mylogargs,"%rawmsg%"` plus
   `:rawmsg, ereregex, "sector|FAILED|..."  ^/usr/local/sbin/mylogwatch; mylogargs`.
@@ -208,6 +223,54 @@ off:
 
 That works — nothing else in the shipped unit forces it back on — but it
 relaxes the hardening for everything rsyslog runs, not just this script.
+
+### Wiring it into Apache
+
+Apache can hand a request straight to `mylogwatch` as a piped log. Two
+lines in the vhost — one tagging the requests worth knowing about, one
+logging them — are the whole integration:
+
+```
+SetEnvIf Request_URI "/toh/ota" WATCHED
+CustomLog "|/usr/local/sbin/mylogwatch" combined env=WATCHED
+```
+
+`env=WATCHED` restricts this `CustomLog` to the requests `SetEnvIf`
+tagged, so nothing else reaches the script and the normal access log
+goes on recording every request as before. Check it with `apachectl -t`
+and `systemctl reload apache2`; from then on a device pulling firmware
+from `/toh/ota` — or anything else probing it — turns into a mail.
+
+Apache starts a piped-log program once, at server startup, and writes
+one line per matching request to its stdin. That is exactly the
+no-argument mode, so there is no wrapper script in the picture. What
+follows from it:
+
+- The program is spawned by the parent httpd process and inherits its
+  uid, so it runs as **root**. `PRIV_CMD` is unnecessary and
+  `/etc/nullmailer/remotes` is readable.
+- `"|$..."` is the same thing spawned through `/bin/sh -c` rather than
+  directly. Nothing here needs a shell, so plain `"|..."` is the better
+  form — one process fewer, and no shell parsing between Apache and the
+  script.
+- **`mylogwatch.cfg` is read once**, when Apache starts the process,
+  not per line the way a per-invocation caller re-reads it. An edit to
+  `IGNORES` takes effect on the next `systemctl reload apache2`, not on
+  the next request.
+- The process inherits `apache2.service`'s sandbox. Check
+  `systemctl show apache2 -p PrivateTmp`: if it is on, the default
+  `RUNDIR=/tmp` is Apache's private tmpfs, so runtime state is
+  invisible to a hand-run of the script and is wiped whenever Apache
+  restarts — and a `FLUSH_WRAPPER` would need `RUNDIR` pinned outside
+  `/tmp`, for the reason described
+  [above](#debian-13-trixie-and-other-sandboxed-rsyslog-units).
+- Every line `IGNORES` drops writes one `ignored` to
+  `$RUNDIR/mylogwatch.log`, which nothing rotates. That is nothing at
+  the rate an `env=`-gated log fires, but it is a reason not to point an
+  ungated `CustomLog` at the script.
+- Apache restarts a piped-log program that dies, so a crash is not
+  fatal — but the requests logged in between are lost, which is why the
+  read loop keeps going rather than exit on a line it dislikes.
 
 ## Configuration
 
@@ -289,6 +352,14 @@ EOF
 ./mylogwatch "Aug  7 10:00:00 host kernel: link up from 8.8.8.8"
 ./mylogwatch "Aug  7 10:00:01 host device AA:BB:CC:DD:EE:FF joined"
 sleep 4 && cat /tmp/mw_sent.log
+```
+
+Feeding the same lines on stdin exercises the other calling convention,
+against a single long-lived process rather than one per line:
+
+```bash
+printf '%s\n' "Aug  7 10:00:00 host kernel: link up from 8.8.8.8" \
+              "Aug  7 10:00:01 host device AA:BB:CC:DD:EE:FF joined" | ./mylogwatch
 ```
 
 `./mylogwatch FLUSH` cuts the wait short. Diagnostics from non-tty runs

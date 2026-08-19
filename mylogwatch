@@ -48,7 +48,12 @@ IGNORE_RE="${IGNORE_RE#|}"
 # remove the trailing | left over by the collapse above
 IGNORE_RE="${IGNORE_RE%|}"
 
-if ! [[ "$MSG" =~ ^FLUSH$ ]]; then
+# Everything one log line needs: filter it, buffer it, schedule the flush.
+# Factored out because a caller may hand us one line in the arguments or a
+# stream of them on stdin -- both take exactly this path.
+buffer_line()                   # $1: the log line
+{
+    local MSG="$1"
 
     # any match leads to an ignore; a blank line always does
     if [[ -z "$MSG" || ( -n "$IGNORE_RE" && "$MSG" =~ $IGNORE_RE ) ]]; then
@@ -69,7 +74,36 @@ if ! [[ "$MSG" =~ ^FLUSH$ ]]; then
         # has to word-split into argv. It exists so the flush -- the half that
         # runs sendmail -- can be pushed out of whatever sandbox the caller
         # sits in; see mylogwatch.cfg.example.
-        (flock -n 9 || exit; sleep $WAIT_TO_SEND) 9> "$SCHEDLOCK" && $FLUSH_WRAPPER "$SELF" FLUSH &
+        #
+        # The flush reads from /dev/null so it cannot inherit the stdin the
+        # loop below is reading. The generated awk program is BEGIN-only and
+        # so never touches stdin, but that is not a property to depend on
+        # from over here.
+        (flock -n 9 || exit; sleep $WAIT_TO_SEND) 9> "$SCHEDLOCK" && $FLUSH_WRAPPER "$SELF" FLUSH < /dev/null &
+    fi
+}
+
+if ! [[ "$MSG" =~ ^FLUSH$ ]]; then
+
+    if [ $# -eq 0 ]; then
+        # No line in the arguments means the caller feeds them on stdin
+        # instead, one per line, from a process it starts once and keeps
+        # alive: an Apache piped log ("|$/usr/local/sbin/mylogwatch"), or
+        # rsyslog's omprog. Reading them here is what lets those two name
+        # this script directly, with no read-loop wrapper in between.
+        #
+        # Never block and never exit: the flush is backgrounded as always,
+        # and nothing in the loop aborts on a line it dislikes. A piped-log
+        # program that dies does get respawned, but every line written in
+        # the meantime is lost.
+        #
+        # FLUSH is deliberately not honoured here -- it is an argv-only
+        # command, and a line off stdin is caller-controlled text.
+        while IFS= read -r line || [ -n "$line" ]; do
+            buffer_line "$line"
+        done
+    else
+        buffer_line "$MSG"
     fi
 
 else

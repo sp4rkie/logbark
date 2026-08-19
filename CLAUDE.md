@@ -21,6 +21,29 @@ the entire second half of the file. Both halves share the config and lock-path
 setup at the top, so a change to `RUNDIR`/`PRGBNAME` naming affects both
 automatically.
 
+**A third entry point, not a third mode.** With no arguments at all the script
+reads lines from stdin in a loop and hands each to `buffer_line()` — the same
+function the argument path calls, so there is exactly one filter/append/schedule
+implementation. It is there for callers that start one process and keep it
+alive (an Apache piped log, rsyslog's `omprog`); `README.md` has the wiring.
+Three things about it are load-bearing:
+
+- **It keys on `$# -eq 0`, not on a flag.** Zero arguments was already a no-op
+  (`MSG=""` is blank, and blank is always ignored), so nothing regressed, and
+  the caller's config stays a bare path.
+- **`FLUSH` is argv-only.** A line off stdin is caller-controlled text — in the
+  Apache case it carries a request URL — so the `FLUSH` test is made before the
+  loop is entered and never against a line the loop read.
+- **The flush child reads `/dev/null`.** Without it the backgrounded flush
+  inherits the caller's pipe as stdin. That is harmless only because the
+  generated awk program is BEGIN-only, and gawk skips reading input for those;
+  give that program a main rule and it would start eating the log stream.
+
+The loop's one cost is that the cfg is sourced once at process start rather than
+per line. That is inherent to a long-lived caller and is documented in the
+README rather than worked around — re-sourcing per line would mean moving the
+whole `RUNDIR`/`LOGBUFF`/`IGNORE_RE` derivation into `buffer_line()`.
+
 **The awk program is generated, not shipped.** The FLUSH branch writes a gawk
 program to an `mktemp` file and `exec`s it; that program does the mail
 formatting, reverse DNS (`getent hosts`), and device-label substitution. The
