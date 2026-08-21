@@ -50,9 +50,9 @@
 # Mail is accepted and queued, then silently never delivered. Sending it from
 # a transient unit instead re-parents the flush to PID 1, outside that sandbox:
 #
-#FLUSH_WRAPPER="systemd-run --quiet --collect --unit=mylogwatch-flush-$$"
+#FLUSH_WRAPPER="systemd-run --quiet --collect --property=ExitType=cgroup --unit=mylogwatch-flush-$$"
 #
-# Two things that recipe depends on:
+# Three things that recipe depends on:
 #
 #   - RUNDIR must NOT be under /tmp if the calling unit has PrivateTmp=yes.
 #     The caller would append to its own private /tmp while the transient unit
@@ -62,6 +62,16 @@
 #   - The script must be invoked by an absolute path, or be reachable from the
 #     caller's $PWD -- systemd-run rejects a relative executable. Anything
 #     started from rsyslog already satisfies this.
+#   - ExitType=cgroup is not optional with an MTA that delivers from a child
+#     of the submitting process, which is what exim does by default. Without
+#     it the transient unit is finished the instant sendmail exits, and
+#     KillMode defaults to control-group, so systemd kills exim's forked
+#     delivery process before it gets anywhere. exim logs the "<=" that
+#     accepts the message and no "=>" at all, and nothing is delivered until
+#     the next queue run -- minutes later, or a full QUEUEINTERVAL. Setting
+#     it keeps the unit alive until every process in its cgroup has exited.
+#     It costs nothing for nullmailer or postfix, which only spool and
+#     return, leaving delivery to a daemon that was never in the unit.
 #
 # Use "$$" (expanded here, when the cfg is sourced) rather than a fixed unit
 # name: the debounce lock is released before the flush runs, so two flushes can

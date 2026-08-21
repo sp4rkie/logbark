@@ -114,6 +114,13 @@ matters here is the mechanics:
 - **A transient unit name needs `$$`, not a fixed string.** The debounce lock is
   released before the flush runs (above), so two flushes can legitimately
   overlap and a fixed `--unit=` would make the second fail to start.
+- **`ExitType=cgroup` in the recipe is load-bearing, not decoration.** A
+  transient unit ends when its main process exits, and `KillMode=` defaults to
+  `control-group`, so systemd kills whatever that process left behind. An MTA
+  that delivers from a child of the submitter — exim, by default — loses that
+  child and the mail waits for the next queue run, with an `<=` and no `=>` in
+  the log. nullmailer and Postfix only spool and return, which is why the
+  recipe shipped without it for so long. `README.md` has the diagnosis.
 
 **Config.** `. $0.cfg` sources site settings on every run, silently if absent.
 Because it is `$0`-relative, the cfg must be named after and live beside the

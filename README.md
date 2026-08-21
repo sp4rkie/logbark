@@ -205,7 +205,7 @@ inside it — so launching just that half as a transient unit re-parents it
 to PID 1 and leaves rsyslog's hardening untouched:
 
     RUNDIR=/var/lib/mylogwatch
-    FLUSH_WRAPPER="systemd-run --quiet --collect --unit=mylogwatch-flush-$$"
+    FLUSH_WRAPPER="systemd-run --quiet --collect --property=ExitType=cgroup --unit=mylogwatch-flush-$$"
 
 `RUNDIR` is not optional here. `rsyslog.service` also sets
 `PrivateTmp=yes`, so the default `RUNDIR=/tmp` resolves to a per-service
@@ -213,6 +213,25 @@ private tmpfs for the buffering half, while the transient unit sees the
 real `/tmp` — the flush would find an empty buffer and mail nothing. Any
 path outside `/tmp` that both can reach works; `/var` stays writable
 under `ProtectSystem=full`.
+
+`ExitType=cgroup` is not optional either, once the MTA delivers from a
+child of the submitting process — which is what exim does by default. A
+transient unit is finished the instant its main process exits, and
+`KillMode=` defaults to `control-group`, so systemd kills whatever that
+process left behind. `sendmail` spools the message and returns, exim's
+forked delivery process is killed a moment later, and the mail sits on
+the queue. The signature in `/var/log/exim4/mainlog` is an acceptance
+line with no delivery line after it:
+
+    2026-01-01 05:50:49 1abCdE-000000012345-6xYz <= mylogwatch.host@example.com U=root P=local S=316
+
+and then nothing at all until a queue runner picks it up minutes later —
+up to a full `QUEUEINTERVAL`. Setting `ExitType=cgroup` keeps the unit
+running until every process in its cgroup has exited, which is the
+missing piece. It needs systemd 250 or newer, and it costs nothing under
+nullmailer or Postfix: both only spool and return, leaving delivery to a
+daemon that was never inside the transient unit. That is why the recipe
+went so long without it.
 
 The blunter alternative is a drop-in that turns the offending directive
 off:
@@ -282,7 +301,7 @@ format of the two list-shaped ones.
 | `IGNORES` | *(empty)* | `\|`-joined regex alternatives; a line matching any of them is dropped instead of buffered. Unanchored, so an entry matches anywhere in the line. Blank lines are always dropped regardless. |
 | `AP_ETHERS` | *(empty)* | `Label\|Identifier\|` pairs. Each identifier found in a buffered line is replaced by `[ Label ]`. A lookup table only — listing a device annotates its lines, it does not drop them. |
 | `EMAIL_DOMAIN` | smart host from `/etc/nullmailer/remotes`, else `example.com` | Domain used for the `From:`/`To:` addresses. |
-| `FLUSH_WRAPPER` | *(empty)* | Command prefix the `FLUSH` pass is launched through, e.g. `systemd-run --quiet --collect --unit=mylogwatch-flush-$$`. Empty runs it as a plain background child. See [Debian 13 (trixie) and other sandboxed rsyslog units](#debian-13-trixie-and-other-sandboxed-rsyslog-units). |
+| `FLUSH_WRAPPER` | *(empty)* | Command prefix the `FLUSH` pass is launched through, e.g. `systemd-run --quiet --collect --property=ExitType=cgroup --unit=mylogwatch-flush-$$`. Empty runs it as a plain background child. See [Debian 13 (trixie) and other sandboxed rsyslog units](#debian-13-trixie-and-other-sandboxed-rsyslog-units). |
 | `PRIV_CMD` | *(empty)* | Command prefix used to run `awk` when not root, e.g. `sudo`. |
 | `RUNDIR` | `$TMPDIR`, else `/tmp` | Where all runtime state is kept. |
 | `WAIT_TO_SEND` | `5` | Seconds to collect lines before flushing a batch. |
