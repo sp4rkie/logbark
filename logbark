@@ -149,7 +149,7 @@ func rev_resolution(tocheck, \
         # delimit maximum loop cnt for your safety
         #
         if (CNT++ > 10) {
-            print "logbark: EMERGENCY BREAK IN LOOP"
+            print PRGBNAME ": EMERGENCY BREAK IN LOOP"
             break
         }
     }
