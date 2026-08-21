@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-`mylogwatch` is a single executable bash script (plus a sourced config) that
+`logbark` is a single executable bash script (plus a sourced config) that
 buffers interesting log lines, coalesces them over a short window, and mails the
 batch via `sendmail`. There is no build system, no dependency manifest, and no
 test suite — the repo is the deliverable. `README.md` carries end-user setup,
@@ -73,13 +73,13 @@ mawk/POSIX awk will fail at runtime, not at `bash -n`.
 **Locking is the part to be careful with.** Three distinct pieces of state
 under `RUNDIR`, all named after the script:
 
-- `mylogwatch` — the shared buffer, appended by every invocation.
-- `mylogwatch.lock` — guards the buffer. Held by appends, and by the flush for
+- `logbark` — the shared buffer, appended by every invocation.
+- `logbark.lock` — guards the buffer. Held by appends, and by the flush for
   only the instant of the `mv` that rotates the buffer to a private
-  `mylogwatch.$$` batch file. Mailing happens *after* the lock is released, so a
+  `logbark.$$` batch file. Mailing happens *after* the lock is released, so a
   slow `sendmail` never blocks log writers and a line arriving mid-flush lands
   in the next batch rather than being dropped.
-- `mylogwatch.lck` — debounces scheduling (`flock -n`), so a burst of lines
+- `logbark.lck` — debounces scheduling (`flock -n`), so a burst of lines
   produces one mail. It is released before the flush runs, so a line arriving
   while `sendmail` is still going can schedule the next flush instead of sitting
   unsent.
@@ -140,6 +140,6 @@ filter. `AP_ETHERS` is a lookup
 table only — matching it must never drop a line; that distinction was a real
 bug and the comment above `IGNORE_RE` explains it.
 
-`mylogwatch.cfg` is gitignored: it holds real MAC/IMSI/IMEI values and host
-names. Edit `mylogwatch.cfg.example` when adding or changing an option, and
+`logbark.cfg` is gitignored: it holds real MAC/IMSI/IMEI values and host
+names. Edit `logbark.cfg.example` when adding or changing an option, and
 never copy values out of the live cfg into tracked files or commit messages.

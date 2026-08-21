@@ -2,7 +2,7 @@
 
 # Site-local settings (ignore/replace rules, EMAIL_DOMAIN override, PRIV_CMD)
 # live in $0.cfg, which is deliberately not part of this repo -- copy
-# mylogwatch.cfg.example next to this script and adjust it per host.
+# logbark.cfg.example next to this script and adjust it per host.
 PRGBNAME="${0##*/}"
 # FLUSH_WRAPPER may hand this path to a launcher that insists on an absolute
 # one (systemd-run does). Absolutize without resolving symlinks, so "$SELF.cfg"
@@ -73,7 +73,7 @@ buffer_line()                   # $1: the log line
         # FLUSH_WRAPPER is deliberately unquoted: it is a command *prefix* that
         # has to word-split into argv. It exists so the flush -- the half that
         # runs sendmail -- can be pushed out of whatever sandbox the caller
-        # sits in; see mylogwatch.cfg.example.
+        # sits in; see logbark.cfg.example.
         #
         # The flush reads from /dev/null so it cannot inherit the stdin the
         # loop below is reading. The generated awk program is BEGIN-only and
@@ -88,7 +88,7 @@ if ! [[ "$MSG" =~ ^FLUSH$ ]]; then
     if [ $# -eq 0 ]; then
         # No line in the arguments means the caller feeds them on stdin
         # instead, one per line, from a process it starts once and keeps
-        # alive: an Apache piped log ("|$/usr/local/sbin/mylogwatch"), or
+        # alive: an Apache piped log ("|$/usr/local/sbin/logbark"), or
         # rsyslog's omprog. Reading them here is what lets those two name
         # this script directly, with no read-loop wrapper in between.
         #
@@ -149,7 +149,7 @@ func rev_resolution(tocheck, \
         # delimit maximum loop cnt for your safety
         #
         if (CNT++ > 10) {
-            print "mylogwatch: EMERGENCY BREAK IN LOOP"
+            print "logbark: EMERGENCY BREAK IN LOOP"
             break
         }
     }
@@ -203,7 +203,7 @@ BEGIN {
         EMAIL_DOMAIN = a[1]
     }
 
-    # highest priority: an explicit per-host override from mylogwatch.cfg
+    # highest priority: an explicit per-host override from logbark.cfg
     EMAIL_DOMAIN_OVERRIDE = "$EMAIL_DOMAIN"
     if (EMAIL_DOMAIN_OVERRIDE) {
         EMAIL_DOMAIN = EMAIL_DOMAIN_OVERRIDE

@@ -1,4 +1,4 @@
-# mylogwatch
+# logbark
 
 A small bash+awk tool that watches for interesting log lines, coalesces
 them into a batch over a short window, and mails the batch out —
@@ -8,7 +8,7 @@ identifiers (MAC/IMSI/IMEI/...) for friendly labels along the way.
 Each invocation receives one log line as its argument:
 
 ```
-mylogwatch "Aug  5 12:00:00 host kernel: something happened"
+logbark "Aug  5 12:00:00 host kernel: something happened"
 ```
 
 Quoting it is good practice, but not load-bearing — any extra arguments
@@ -18,14 +18,14 @@ Called with no arguments at all, it reads log lines from standard input
 instead, one per line, until stdin closes:
 
 ```
-tail -Fn0 /var/log/syslog | mylogwatch
+tail -Fn0 /var/log/syslog | logbark
 ```
 
 That mode is for callers that start a single process and keep it alive,
 feeding it a stream — an Apache piped log, or rsyslog's `omprog`. Those
 can name the script directly, with no read-loop wrapper in between. The
 one thing it costs is config reloading: a long-lived process reads
-`mylogwatch.cfg` once at startup rather than per line.
+`logbark.cfg` once at startup rather than per line.
 
 The first call in a batch schedules a flush `WAIT_TO_SEND` seconds
 later (5s by default); further calls in that window just append to the
@@ -33,6 +33,21 @@ buffer. When the flush fires, everything buffered since is mailed as a
 single message and the cycle starts over on the next new line — a line
 arriving while the mail is still being sent simply opens the next
 batch.
+
+**Renamed from `mylogwatch`.** Upgrading takes one extra step: rename
+the config alongside the script. It is sourced as `$0.cfg` and silently
+skipped when missing, so a `logbark` next to a `mylogwatch.cfg` runs
+with no site config at all — no `IGNORES`, no `AP_ETHERS`, no
+`EMAIL_DOMAIN`, and no error either.
+
+```bash
+mv /usr/local/sbin/mylogwatch.cfg /usr/local/sbin/logbark.cfg
+```
+
+Everything else follows the script's own name by itself, including the
+address the mail comes from: `mylogwatch.<host>@<domain>` is now
+`logbark.<host>@<domain>`, so a mail filter matching the old one needs
+updating, as does any caller naming the old path.
 
 - [Requirements](#requirements)
 - [Setup](#setup)
@@ -62,8 +77,8 @@ batch.
    from) and make it executable:
 
    ```bash
-   cp mylogwatch /usr/local/sbin/mylogwatch
-   chmod +x /usr/local/sbin/mylogwatch
+   cp logbark /usr/local/sbin/logbark
+   chmod +x /usr/local/sbin/logbark
    ```
 
    The install directory does not need to be writable — all runtime
@@ -72,21 +87,21 @@ batch.
 2. Copy the config template next to it and edit it for your site:
 
    ```bash
-   cp mylogwatch.cfg.example /usr/local/sbin/mylogwatch.cfg
+   cp logbark.cfg.example /usr/local/sbin/logbark.cfg
    ```
 
-   `mylogwatch.cfg` is sourced by the script on every run (silently
+   `logbark.cfg` is sourced by the script on every run (silently
    skipped if missing) and is **not** meant to be checked into git —
    it's exactly where site-specific things like device identifiers,
    your outgoing mail domain, or a privilege-escalation command belong.
    It must sit next to the script, named after it.
 
-3. Feed it log lines. `mylogwatch` doesn't tail anything itself — wire
+3. Feed it log lines. `logbark` doesn't tail anything itself — wire
    it into whatever produces the lines you care about. For example, to
    follow a plain text log:
 
    ```bash
-   tail -Fn0 /var/log/syslog | /usr/local/sbin/mylogwatch
+   tail -Fn0 /var/log/syslog | /usr/local/sbin/logbark
    ```
 
    or point a syslog daemon's program/exec action (see
@@ -95,7 +110,7 @@ batch.
    udev rule, or a cron job at it — anything that can either call it
    once per line of interest or hand it a stream of them.
 
-4. If it won't run as root, set `PRIV_CMD` in `mylogwatch.cfg` (e.g.
+4. If it won't run as root, set `PRIV_CMD` in `logbark.cfg` (e.g.
    `PRIV_CMD="sudo"`) — root is needed to read
    `/etc/nullmailer/remotes` for smart-host detection.
 
@@ -117,7 +132,7 @@ if  $rawmsg contains "sector"
  or $rawmsg contains "EXT4-fs error"
  or re_match($rawmsg, "activated.*BogoMIPS")
  or re_match($rawmsg, "usb .*: (Product:|USB disconnect)")
-then ^/usr/local/sbin/mylogwatch;mylogargs
+then ^/usr/local/sbin/logbark;mylogargs
 ```
 
 Check it with `rsyslogd -N1 -f /etc/rsyslog.d/xlog-all.conf`, then
@@ -135,7 +150,7 @@ A few things worth knowing about that config:
   [Debian 13 (trixie) and other sandboxed rsyslog units](#debian-13-trixie-and-other-sandboxed-rsyslog-units).
 - `%rawmsg%` passes the message as received, which for anything arriving
   over a socket includes the numeric priority prefix (`<13>`) ahead of
-  the timestamp. That is what `mylogwatch` wants — it strips the prefix
+  the timestamp. That is what `logbark` wants — it strips the prefix
   and does its own tidying (kernel timestamp in the subject, reverse
   DNS, device labels).
 - `contains` is a plain case-sensitive substring test and is cheaper
@@ -149,7 +164,7 @@ A few things worth knowing about that config:
   line matching two of them invoke the script twice and show up twice
   in the mail. One `if` hands each line over exactly once, however many
   of its conditions hold.
-- `mylogwatch` returns as soon as it has buffered the line — the flush
+- `logbark` returns as soon as it has buffered the line — the flush
   is backgrounded — so rsyslog is never held up by a slow `sendmail`.
 - The shell-execute action forks a process per matching message, which
   is fine at the rate these conditions fire. For one that matches
@@ -160,7 +175,7 @@ A few things worth knowing about that config:
   [Wiring it into Apache](#wiring-it-into-apache).
 - The legacy one-line form does the same job:
   `$template mylogargs,"%rawmsg%"` plus
-  `:rawmsg, ereregex, "sector|FAILED|..."  ^/usr/local/sbin/mylogwatch; mylogargs`.
+  `:rawmsg, ereregex, "sector|FAILED|..."  ^/usr/local/sbin/logbark; mylogargs`.
   RainerScript is used above only because its condition list can span
   lines; the legacy filter cannot be wrapped, so that pattern grows into
   one very long line.
@@ -173,14 +188,14 @@ remainder without touching the rsyslog config.
 
 Debian 13 ships `rsyslog.service` with a systemd sandbox that earlier
 releases did not have, and a `^program` action inherits all of it. Two
-directives in it break `mylogwatch`:
+directives in it break `logbark`:
 
 - `ProtectHome=yes` replaces `/root` and `/home` with an empty,
   mode-`000` directory inside rsyslogd's mount namespace. A script
   installed under `/root/bin` simply does not exist as far as rsyslog is
   concerned; the `execve()` fails and the only thing logged is
 
-      rsyslogd: program '/root/bin/mylogwatch' (pid N) exited with status 1
+      rsyslogd: program '/root/bin/logbark' (pid N) exited with status 1
 
   Installing to `/usr/local/sbin` (or anywhere outside `/root` and
   `/home`) is enough — the script never writes next to itself, so a
@@ -195,7 +210,7 @@ directives in it break `mylogwatch`:
 
       nullmailer-send: Can't open file '1787077005.7947'
 
-  This one is silent from `mylogwatch`'s side — the script exits 0, the
+  This one is silent from `logbark`'s side — the script exits 0, the
   mail is accepted, and it accumulates in `/var/spool/nullmailer/queue`
   forever. `journalctl -u nullmailer` is the only place it shows.
 
@@ -204,8 +219,8 @@ directives in it break `mylogwatch`:
 inside it — so launching just that half as a transient unit re-parents it
 to PID 1 and leaves rsyslog's hardening untouched:
 
-    RUNDIR=/var/lib/mylogwatch
-    FLUSH_WRAPPER="systemd-run --quiet --collect --property=ExitType=cgroup --unit=mylogwatch-flush-$$"
+    RUNDIR=/var/lib/logbark
+    FLUSH_WRAPPER="systemd-run --quiet --collect --property=ExitType=cgroup --unit=logbark-flush-$$"
 
 `RUNDIR` is not optional here. `rsyslog.service` also sets
 `PrivateTmp=yes`, so the default `RUNDIR=/tmp` resolves to a per-service
@@ -223,7 +238,7 @@ forked delivery process is killed a moment later, and the mail sits on
 the queue. The signature in `/var/log/exim4/mainlog` is an acceptance
 line with no delivery line after it:
 
-    2026-01-01 05:50:49 1abCdE-000000012345-6xYz <= mylogwatch.host@example.com U=root P=local S=316
+    2026-01-01 05:50:49 1abCdE-000000012345-6xYz <= logbark.host@example.com U=root P=local S=316
 
 and then nothing at all until a queue runner picks it up minutes later —
 up to a full `QUEUEINTERVAL`. Setting `ExitType=cgroup` keeps the unit
@@ -236,7 +251,7 @@ went so long without it.
 The blunter alternative is a drop-in that turns the offending directive
 off:
 
-    # /etc/systemd/system/rsyslog.service.d/mylogwatch.conf
+    # /etc/systemd/system/rsyslog.service.d/logbark.conf
     [Service]
     NoNewPrivileges=no
 
@@ -245,13 +260,13 @@ relaxes the hardening for everything rsyslog runs, not just this script.
 
 ### Wiring it into Apache
 
-Apache can hand a request straight to `mylogwatch` as a piped log. Two
+Apache can hand a request straight to `logbark` as a piped log. Two
 lines in the vhost — one tagging the requests worth knowing about, one
 logging them — are the whole integration:
 
 ```
 SetEnvIf Request_URI "/toh/ota" WATCHED
-CustomLog "|/usr/local/sbin/mylogwatch" combined env=WATCHED
+CustomLog "|/usr/local/sbin/logbark" combined env=WATCHED
 ```
 
 `env=WATCHED` restricts this `CustomLog` to the requests `SetEnvIf`
@@ -272,7 +287,7 @@ follows from it:
   directly. Nothing here needs a shell, so plain `"|..."` is the better
   form — one process fewer, and no shell parsing between Apache and the
   script.
-- **`mylogwatch.cfg` is read once**, when Apache starts the process,
+- **`logbark.cfg` is read once**, when Apache starts the process,
   not per line the way a per-invocation caller re-reads it. An edit to
   `IGNORES` takes effect on the next `systemctl reload apache2`, not on
   the next request.
@@ -284,7 +299,7 @@ follows from it:
   `/tmp`, for the reason described
   [above](#debian-13-trixie-and-other-sandboxed-rsyslog-units).
 - Every line `IGNORES` drops writes one `ignored` to
-  `$RUNDIR/mylogwatch.log`, which nothing rotates. That is nothing at
+  `$RUNDIR/logbark.log`, which nothing rotates. That is nothing at
   the rate an `env=`-gated log fires, but it is a reason not to point an
   ungated `CustomLog` at the script.
 - Apache restarts a piped-log program that dies, so a crash is not
@@ -293,7 +308,7 @@ follows from it:
 
 ## Configuration
 
-All of these are optional; see `mylogwatch.cfg.example` for the exact
+All of these are optional; see `logbark.cfg.example` for the exact
 format of the two list-shaped ones.
 
 | Setting | Default | Purpose |
@@ -301,7 +316,7 @@ format of the two list-shaped ones.
 | `IGNORES` | *(empty)* | `\|`-joined regex alternatives; a line matching any of them is dropped instead of buffered. Unanchored, so an entry matches anywhere in the line. Blank lines are always dropped regardless. |
 | `AP_ETHERS` | *(empty)* | `Label\|Identifier\|` pairs. Each identifier found in a buffered line is replaced by `[ Label ]`. A lookup table only — listing a device annotates its lines, it does not drop them. |
 | `EMAIL_DOMAIN` | smart host from `/etc/nullmailer/remotes`, else `example.com` | Domain used for the `From:`/`To:` addresses. |
-| `FLUSH_WRAPPER` | *(empty)* | Command prefix the `FLUSH` pass is launched through, e.g. `systemd-run --quiet --collect --property=ExitType=cgroup --unit=mylogwatch-flush-$$`. Empty runs it as a plain background child. See [Debian 13 (trixie) and other sandboxed rsyslog units](#debian-13-trixie-and-other-sandboxed-rsyslog-units). |
+| `FLUSH_WRAPPER` | *(empty)* | Command prefix the `FLUSH` pass is launched through, e.g. `systemd-run --quiet --collect --property=ExitType=cgroup --unit=logbark-flush-$$`. Empty runs it as a plain background child. See [Debian 13 (trixie) and other sandboxed rsyslog units](#debian-13-trixie-and-other-sandboxed-rsyslog-units). |
 | `PRIV_CMD` | *(empty)* | Command prefix used to run `awk` when not root, e.g. `sudo`. |
 | `RUNDIR` | `$TMPDIR`, else `/tmp` | Where all runtime state is kept. |
 | `WAIT_TO_SEND` | `5` | Seconds to collect lines before flushing a batch. |
@@ -309,7 +324,7 @@ format of the two list-shaped ones.
 ## The mail it sends
 
 One batch is one mail, sent from and to
-`mylogwatch.<short-hostname>@<EMAIL_DOMAIN>`. The subject is the first
+`logbark.<short-hostname>@<EMAIL_DOMAIN>`. The subject is the first
 line of the batch (with a leading kernel timestamp like
 `[   12.345678] ` stripped off); the body holds every line of the
 batch, in arrival order, first line included.
@@ -333,7 +348,7 @@ story.
 ## Notes
 
 - Runtime state all lives under `RUNDIR`, named after the script:
-  the buffer (`mylogwatch`), its lock (`.lock`), the flush debounce
+  the buffer (`logbark`), its lock (`.lock`), the flush debounce
   lock (`.lck`), the diagnostic log (`.log`), plus short-lived
   per-flush batch and `awk` files. Nothing is ever written next to the
   script, and nothing needs managing by hand.
@@ -341,7 +356,7 @@ story.
   the same lock, and a flush atomically hands the buffer off to a
   private file before mailing it, so a line arriving mid-flush is never
   silently dropped, and a slow mail send never blocks new appends.
-- Force an immediate flush manually with `mylogwatch FLUSH`.
+- Force an immediate flush manually with `logbark FLUSH`.
 
 ## Development
 
@@ -349,7 +364,7 @@ There is nothing to build or install — the script is the deliverable.
 Syntax-check it after any edit:
 
 ```bash
-bash -n mylogwatch
+bash -n logbark
 ```
 
 ### Testing without mailing anything
@@ -360,17 +375,17 @@ exercises the real batching, locking, reverse-DNS and label-substitution
 paths, and leaves the message in a file you can read:
 
 ```bash
-mkdir -p /tmp/mw/run && cp mylogwatch /tmp/mw/ && cd /tmp/mw
-sed -i 's#^ *SENDMAIL = .*#    SENDMAIL = "cat >> /tmp/mw_sent.log"#' mylogwatch
-cat > mylogwatch.cfg <<'EOF'          # the cfg must sit next to the copy
-RUNDIR="/tmp/mw/run"
+mkdir -p /tmp/lb/run && cp logbark /tmp/lb/ && cd /tmp/lb
+sed -i 's#^ *SENDMAIL = .*#    SENDMAIL = "cat >> /tmp/lb_sent.log"#' logbark
+cat > logbark.cfg <<'EOF'          # the cfg must sit next to the copy
+RUNDIR="/tmp/lb/run"
 WAIT_TO_SEND=2
 AP_ETHERS='my-router      |AA:BB:CC:DD:EE:FF|^$|__END__'
 EOF
 
-./mylogwatch "Aug  7 10:00:00 host kernel: link up from 8.8.8.8"
-./mylogwatch "Aug  7 10:00:01 host device AA:BB:CC:DD:EE:FF joined"
-sleep 4 && cat /tmp/mw_sent.log
+./logbark "Aug  7 10:00:00 host kernel: link up from 8.8.8.8"
+./logbark "Aug  7 10:00:01 host device AA:BB:CC:DD:EE:FF joined"
+sleep 4 && cat /tmp/lb_sent.log
 ```
 
 Feeding the same lines on stdin exercises the other calling convention,
@@ -378,12 +393,12 @@ against a single long-lived process rather than one per line:
 
 ```bash
 printf '%s\n' "Aug  7 10:00:00 host kernel: link up from 8.8.8.8" \
-              "Aug  7 10:00:01 host device AA:BB:CC:DD:EE:FF joined" | ./mylogwatch
+              "Aug  7 10:00:01 host device AA:BB:CC:DD:EE:FF joined" | ./logbark
 ```
 
-`./mylogwatch FLUSH` cuts the wait short. Diagnostics from non-tty runs
-land in `$RUNDIR/mylogwatch.log`, which is the first place to look when
-a line silently disappears, and `$RUNDIR/mylogwatch*` is worth clearing
+`./logbark FLUSH` cuts the wait short. Diagnostics from non-tty runs
+land in `$RUNDIR/logbark.log`, which is the first place to look when
+a line silently disappears, and `$RUNDIR/logbark*` is worth clearing
 between runs — a stale buffer or lock will skew the next test.
 
 Testing a `PRIV_CMD` or `/etc/nullmailer/remotes` code path needs root;

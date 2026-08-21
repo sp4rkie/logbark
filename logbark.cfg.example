@@ -1,6 +1,6 @@
-# Site-local settings for mylogwatch, sourced via ". $0.cfg" on every run.
-# Copy this file to "mylogwatch.cfg" next to the script and adjust it --
-# mylogwatch.cfg itself is gitignored since it typically ends up holding
+# Site-local settings for logbark, sourced via ". $0.cfg" on every run.
+# Copy this file to "logbark.cfg" next to the script and adjust it --
+# logbark.cfg itself is gitignored since it typically ends up holding
 # device identifiers (MAC/IMSI/IMEI) you don't want in version control.
 
 # IGNORES: "|"-joined regex alternatives; a line matching any of them is
@@ -42,7 +42,7 @@
 # default) runs it as a plain background child of the invoking process, which
 # is what you want almost everywhere.
 #
-# It exists for callers that run mylogwatch inside a sandbox the flush cannot
+# It exists for callers that run logbark inside a sandbox the flush cannot
 # work in. The case in the wild is Debian 13 (trixie), whose rsyslog.service
 # ships NoNewPrivileges=yes: every child inherits it, so the setuid bit on
 # nullmailer's queue helper is stripped, the queue file is created root:root
@@ -50,14 +50,14 @@
 # Mail is accepted and queued, then silently never delivered. Sending it from
 # a transient unit instead re-parents the flush to PID 1, outside that sandbox:
 #
-#FLUSH_WRAPPER="systemd-run --quiet --collect --property=ExitType=cgroup --unit=mylogwatch-flush-$$"
+#FLUSH_WRAPPER="systemd-run --quiet --collect --property=ExitType=cgroup --unit=logbark-flush-$$"
 #
 # Three things that recipe depends on:
 #
 #   - RUNDIR must NOT be under /tmp if the calling unit has PrivateTmp=yes.
 #     The caller would append to its own private /tmp while the transient unit
 #     reads the real one, and the flush would find an empty buffer and mail
-#     nothing. Pin RUNDIR to a real path (e.g. /var/lib/mylogwatch) alongside
+#     nothing. Pin RUNDIR to a real path (e.g. /var/lib/logbark) alongside
 #     this setting.
 #   - The script must be invoked by an absolute path, or be reachable from the
 #     caller's $PWD -- systemd-run rejects a relative executable. Anything
